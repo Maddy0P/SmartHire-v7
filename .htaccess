@@ -1,0 +1,17 @@
+# SmartHire v7 — root hardening (Apache / XAMPP / shared hosting)
+Options -Indexes
+
+# Block direct access to internal folders
+RedirectMatch 403 ^/.*/(includes|logs|database|tests|deploy)/.*$
+
+# Block sensitive file types from being served
+<FilesMatch "\.(sql|log|md|ini|dockerfile|yaml)$">
+  Require all denied
+</FilesMatch>
+
+# Security headers as a backstop (config.php also sets these)
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

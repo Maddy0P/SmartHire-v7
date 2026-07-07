@@ -1,0 +1,33 @@
+# ── Development / version control ──────────────────────────────
+.git
+.gitignore
+.dockerignore
+
+# ── Build-time files (must not land in /var/www/html web root) ──
+Dockerfile
+docker-compose.yml
+
+# ── Documentation (not needed in runtime image) ─────────────────
+docs/
+**/*.md
+
+# ── Test suite ──────────────────────────────────────────────────
+tests/
+
+# ── Database setup file (run once externally, not needed at runtime)
+database/
+
+# ── Local dev overrides ─────────────────────────────────────────
+includes/config.local.php
+includes/config.local.example.php
+
+# ── Runtime-generated files (bind-mounted or Render Disk in prod) ─
+logs/*.log
+uploads/resumes/*
+!uploads/resumes/.gitkeep
+
+# ── Temporary / OS artifacts ────────────────────────────────────
+*.zip
+*.tar.gz
+.DS_Store
+Thumbs.db

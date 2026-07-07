@@ -1,0 +1,5 @@
+includes/config.local.php
+logs/*.log
+uploads/resumes/*
+!uploads/resumes/.gitkeep
+tests/fixtures/

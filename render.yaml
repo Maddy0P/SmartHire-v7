@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Render blueprint for SmartHire v7 (PHP + Apache via Docker) on Neon PostgreSQL
+#
+#  CRITICAL — use Neon's POOLED connection string for DATABASE_URL:
+#    postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/smarthire?sslmode=require
+#                              ^^^^^^
+#  The pooled endpoint (has "-pooler" in the hostname) is required in a
+#  serverless/container environment. Without it, every PHP request opens a
+#  new TCP+TLS connection to Neon, which causes cold-start latency and may
+#  hit Neon's max-connection limit under load.
+#
+#  DO NOT use the unpooled endpoint (ep-xxx.region.aws.neon.tech) in production.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: smarthire
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter                 # upgrade to "standard" for production (always-on, more CPU)
+    healthCheckPath: /health.php
+
+    envVars:
+      # ── Database (Neon) ────────────────────────────────────────────────────
+      # Option A (recommended): single pooled connection string.
+      # Format: postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/smarthire?sslmode=require
+      - key: DATABASE_URL
+        sync: false               # set this in Render dashboard → Environment
+
+      # Option B: discrete variables (use instead of DATABASE_URL, not both).
+      # - key: DB_HOST            # must be the pooler hostname: ep-xxx-pooler.region.aws.neon.tech
+      #   sync: false
+      # - key: DB_PORT
+      #   value: "5432"
+      # - key: DB_USER
+      #   sync: false
+      # - key: DB_PASS
+      #   sync: false
+      # - key: DB_NAME
+      #   value: smarthire
+
+      - key: DB_SSLMODE
+        value: "require"          # Neon always requires SSL — do not change
+
+      # ── Application ────────────────────────────────────────────────────────
+      - key: SH_DEBUG
+        value: "false"            # NEVER set to true in production
+
+      - key: SH_HTTPS
+        value: "true"             # Render terminates TLS — keep true for HSTS + secure cookies
+
+      # ── Email transport ────────────────────────────────────────────────────
+      # "log"  → writes emails to logs/mail.log (default, no SMTP needed)
+      # "smtp" → requires SH_SMTP_* vars below
+      - key: SH_MAIL_TRANSPORT
+        value: "log"
+
+      - key: SH_MAIL_FROM
+        value: "no-reply@yourdomain.com"
+
+      - key: SH_MAIL_FROM_NAME
+        value: "SmartHire"
+
+      # Uncomment and set these when switching to real SMTP:
+      # - key: SH_SMTP_HOST
+      #   sync: false
+      # - key: SH_SMTP_PORT
+      #   value: "587"
+      # - key: SH_SMTP_USER
+      #   sync: false
+      # - key: SH_SMTP_PASS
+      #   sync: false
+      # - key: SH_SMTP_SECURE
+      #   value: "tls"
+
+    # Persistent disk for resume uploads.
+    # At 3 MB max per resume, 1 GB ≈ 333 files before disk is full.
+    # Increase sizeGB or migrate to S3/R2 for higher volume (Phase 3).
+    disk:
+      name: smarthire-uploads
+      mountPath: /var/www/html/uploads
+      sizeGB: 1
