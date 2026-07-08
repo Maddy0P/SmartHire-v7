@@ -31,15 +31,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $questionIds = array_unique($questionIds);
             }
 
+            // Perf: fetch max_score for ALL selected questions in one query
+            // (was one query per question in the loop below).
+            $maxScoreById = [];
+            if (!empty($questionIds)) {
+                $ph = implode(',', array_fill(0, count($questionIds), '?'));
+                $rows = dbFetchAll("SELECT id, max_score FROM interview_questions WHERE id IN ($ph)",
+                    str_repeat('i', count($questionIds)), ...array_map('intval', $questionIds));
+                foreach ($rows as $row) { $maxScoreById[(int)$row['id']] = $row['max_score']; }
+            }
             $order = 1;
             $totalCalc = 0;
             foreach ($questionIds as $qid) {
                 $qid = (int)$qid;
-                $qm = dbFetchOne("SELECT max_score FROM interview_questions WHERE id=?", 'i', $qid);
+                $maxScore = $maxScoreById[$qid] ?? 10;
                 $perQTime = (int)($_POST['per_q_time'] ?? 0); // global per-q time if set
                 dbExecute("INSERT INTO test_questions (test_id,question_id,marks,order_no,time_limit_secs) VALUES (?,?,?,?,?)",
-                    'iiiii', $tid, $qid, $qm['max_score'] ?? 10, $order++, $perQTime);
-                $totalCalc += ($qm['max_score'] ?? 10);
+                    'iiiii', $tid, $qid, $maxScore, $order++, $perQTime);
+                $totalCalc += $maxScore;
             }
             // Update total_marks if auto-calc
             if (!empty($_POST['auto_calc_marks'])) {

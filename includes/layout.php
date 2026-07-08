@@ -9,10 +9,12 @@ function renderHead(string $pageTitle = 'SmartHire'): void { ?>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><?= htmlspecialchars($pageTitle) ?> — SmartHire</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="assets/css/main.css">
-  <link rel="stylesheet" href="assets/css/v7.css">
+  <link rel="stylesheet" href="assets/css/main.min.css">
+  <link rel="stylesheet" href="assets/css/v7.min.css">
   <meta name="csrf-token" content="<?= csrf_token() ?>">
 </head>
 <body>
@@ -142,8 +144,11 @@ function renderFooter(): void { ?>
     </main>
   </div>
 </div>
-<script src="assets/js/main.js"></script>
-<script src="assets/js/v7.js"></script>
+<script src="assets/js/main.min.js"></script>
+<script src="assets/js/v7.min.js"></script>
+<?php if (SH_DEBUG): $__qs = sh_query_stats(); ?>
+<!-- perf: <?= $__qs['count'] ?> queries, <?= $__qs['total_ms'] ?>ms db time, <?= round((microtime(true)-SH_REQUEST_START)*1000,2) ?>ms total php time -->
+<?php endif; ?>
 </body>
 </html>
 <?php } ?>

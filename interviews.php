@@ -121,7 +121,7 @@ renderSidebar('interviews');
   <div class="card-body" style="padding:12px 16px;">
     <div style="display:flex;gap:10px;align-items:center;">
       <i class="fa-solid fa-search" style="color:var(--text-muted)"></i>
-      <input type="text" id="tableSearch" class="form-control" placeholder="Search candidate, interviewer…" style="border:none;background:transparent;padding:0;flex:1;">
+      <input type="text" id="tableSearch" class="form-control" aria-label="Search interviews" placeholder="Search candidate, interviewer…" style="border:none;background:transparent;padding:0;flex:1;">
     </div>
   </div>
 </div>

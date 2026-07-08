@@ -221,6 +221,21 @@ $testSubs = dbFetchAll("
     WHERE ts.candidate_id=? AND ts.status IN ('submitted','auto_submitted')
     ORDER BY ts.submitted_at DESC", 'i', $cid);
 $testAvg = !empty($testSubs) ? round(array_sum(array_column($testSubs,'percentage'))/count($testSubs)) : 0;
+
+// Perf: fetch per-question time analytics for ALL of this candidate's submissions
+// in one query (was one query per submission inside the loop below), then group
+// by submission_id in PHP. Produces the same per-submission stats as before.
+$qAnalyticsBySub = [];
+if (!empty($testSubs)) {
+    $subIds = array_column($testSubs, 'id');
+    $placeholders = implode(',', array_fill(0, count($subIds), '?'));
+    $allQA = dbFetchAll(
+        "SELECT ta.submission_id, ta.time_spent_secs, ta.is_correct, iq.question_type
+         FROM test_answers ta JOIN interview_questions iq ON iq.id=ta.question_id
+         WHERE ta.submission_id IN ($placeholders)",
+        str_repeat('i', count($subIds)), ...$subIds);
+    foreach ($allQA as $row) { $qAnalyticsBySub[$row['submission_id']][] = $row; }
+}
 ?>
 <?php if (!empty($testSubs)): ?>
 <div class="card" style="margin-bottom:20px">
@@ -237,10 +252,8 @@ $testAvg = !empty($testSubs) ? round(array_sum(array_column($testSubs,'percentag
     $sc = $pct>=75?'score-high':($pct>=50?'score-medium':'score-low');
     $tTime = (int)($sub['time_taken_mins'] ?? 0);
     $efficiency = $sub['duration_minutes'] > 0 ? round($tTime/$sub['duration_minutes']*100) : 0;
-    // Fetch per-question time analytics
-    $qAnalytics = dbFetchAll("SELECT ta.time_spent_secs, ta.is_correct, iq.question_type
-        FROM test_answers ta JOIN interview_questions iq ON iq.id=ta.question_id
-        WHERE ta.submission_id=?", 'i', $sub['id']);
+    // Per-question time analytics (pre-fetched above in one batched query)
+    $qAnalytics = $qAnalyticsBySub[$sub['id']] ?? [];
     $totalTimeSecs = array_sum(array_column($qAnalytics,'time_spent_secs'));
     $correctMCQ = count(array_filter($qAnalytics, fn($a)=>$a['is_correct']==1));
     $totalMCQ   = count(array_filter($qAnalytics, fn($a)=>$a['question_type']==='mcq'));

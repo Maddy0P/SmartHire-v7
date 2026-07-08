@@ -1,4 +1,5 @@
 <?php
+defined('SH_REQUEST_START') || define('SH_REQUEST_START', microtime(true));
 // ═════════════════════════════════════════════════════════════════════════════
 //  SmartHire v7 — includes/config.php   (Hardened Core)
 //  Backward compatible: every v6 helper keeps its exact signature.
@@ -178,11 +179,23 @@ function getDB(): PDO {
 // NOTE: the $types parameter (mysqli bind-type string) is retained for signature
 // compatibility with all existing call sites but is IGNORED — PDO binds positional
 // (?) params by value. This let the MySQL→PostgreSQL port avoid touching 100+ queries.
+
+// Lightweight, zero-overhead-in-production query instrumentation. Only active when
+// SH_DEBUG is true (local/dev); in production this adds one boolean check per call
+// and nothing else. Used for the RC2 benchmark pass and left in for future diagnostics.
+$GLOBALS['__sh_query_log'] = [];
+function sh_query_stats(): array {
+    $log = $GLOBALS['__sh_query_log'];
+    return ['count' => count($log), 'total_ms' => round(array_sum($log) * 1000, 2)];
+}
 function dbFetchAll(string $sql, string $types = '', ...$params): array {
     try {
+        $t0 = SH_DEBUG ? microtime(true) : 0;
         $stmt = getDB()->prepare($sql);
         $stmt->execute($params ?: []);
-        return $stmt->fetchAll();
+        $result = $stmt->fetchAll();
+        if (SH_DEBUG) { $GLOBALS['__sh_query_log'][] = microtime(true) - $t0; }
+        return $result;
     } catch (Throwable $e) {
         sh_log_error('query failed: ' . $e->getMessage() . ' | ' . $sql);
         return [];

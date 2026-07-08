@@ -923,12 +923,6 @@ tbody tr.clickable:hover { cursor:pointer; }
 
 .stat-delta.down { color: #f87171; }
 
-/* variable refs */
---green-val: #10b981;
---amber-val: #f59e0b;
---rose-val:  #ef4444;
---blue-val:  #3b82f6;
-
 /* ══════════════════════════════════════════════════════════
    SmartHire v3 — Bug Fixes & Missing Classes
    ══════════════════════════════════════════════════════════ */

@@ -33,6 +33,23 @@ $submissions = dbFetchAll("
       AND ts.status IN ('submitted','auto_submitted')
     ORDER BY ts.submitted_at DESC", 'i', $cand['id']);
 
+// Perf: pending-subjective-grading counts for ALL submissions in one query
+// (was one query per submission in the loop below). Same per-submission result.
+$pendingBySub = [];
+if (!empty($submissions)) {
+    $subIds = array_column($submissions, 'id');
+    $placeholders = implode(',', array_fill(0, count($subIds), '?'));
+    $pendingRows = dbFetchAll(
+        "SELECT ta.submission_id, COUNT(*) AS n
+         FROM test_answers ta
+         JOIN interview_questions iq ON iq.id = ta.question_id
+         WHERE ta.submission_id IN ($placeholders)
+           AND iq.question_type = 'subjective' AND ta.hr_marks IS NULL
+         GROUP BY ta.submission_id",
+        str_repeat('i', count($subIds)), ...$subIds);
+    foreach ($pendingRows as $row) { $pendingBySub[$row['submission_id']] = (int)$row['n']; }
+}
+
 // Pending = active test AND not yet submitted (NULL or in_progress both count as pending)
 $pendingTests = array_filter($tests, function($t) {
     $notDone = !in_array($t['sub_status'] ?? '', ['submitted', 'auto_submitted']);
@@ -335,14 +352,8 @@ $pendingTests = array_filter($tests, function($t) {
         $pct      = round($sub['percentage'] ?? 0);
         $pass     = $pct >= ($sub['passing_marks'] ?? 40);
         $barColor = $pct>=80?'#10b981':($pct>=60?'#f59e0b':($pct>=40?'#6366f1':'#ef4444'));
-        // Check for pending subjective grading
-        try {
-          $hasPending = dbFetchOne(
-            "SELECT COUNT(*) AS n FROM test_answers ta
-             JOIN interview_questions iq ON iq.id=ta.question_id
-             WHERE ta.submission_id=? AND iq.question_type='subjective' AND ta.hr_marks IS NULL",
-            'i', $sub['id'])['n'] ?? 0;
-        } catch (Throwable $e) { $hasPending = 0; }
+        // Pending subjective grading count (pre-fetched above in one batched query)
+        $hasPending = $pendingBySub[$sub['id']] ?? 0;
       ?>
       <div class="result-row">
         <div style="flex:1;min-width:0">

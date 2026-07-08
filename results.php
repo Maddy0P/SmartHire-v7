@@ -22,7 +22,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$results = dbFetchAll("SELECT r.*,c.name AS cname,c.position,c.id AS cid,i.type AS iv_type,i.scheduled_date FROM results r JOIN candidates c ON c.id=r.candidate_id JOIN interviews i ON i.id=r.interview_id ORDER BY r.created_at DESC");
+// Perf: latest ATS score per candidate is fetched via LATERAL join in the same
+// query instead of one extra round-trip per row (was O(N) queries, now O(1)).
+// Identical result to the old per-row "ORDER BY scanned_at DESC LIMIT 1" lookup.
+$results = dbFetchAll("
+    SELECT r.*, c.name AS cname, c.position, c.id AS cid, i.type AS iv_type, i.scheduled_date,
+           rs.ats_score AS latest_ats_score
+    FROM results r
+    JOIN candidates c ON c.id = r.candidate_id
+    JOIN interviews i ON i.id = r.interview_id
+    LEFT JOIN LATERAL (
+        SELECT ats_score FROM resume_scans
+        WHERE candidate_id = r.candidate_id
+        ORDER BY scanned_at DESC LIMIT 1
+    ) rs ON true
+    ORDER BY r.created_at DESC");
 $completedIvs = dbFetchAll("SELECT i.id,i.type,i.scheduled_date,c.id AS cid,c.name AS cname,c.position FROM interviews i JOIN candidates c ON c.id=i.candidate_id WHERE i.status='completed' AND i.id NOT IN(SELECT interview_id FROM results) ORDER BY i.scheduled_date DESC");
 $statusData = dbFetchAll("SELECT status, COUNT(*) n FROM candidates GROUP BY status");
 $avgData    = dbFetchOne("SELECT ROUND(AVG(technical_score),1) tech,ROUND(AVG(communication),1) comm,ROUND(AVG(problem_solving),1) prob,ROUND(AVG(cultural_fit),1) cult,ROUND(AVG(overall_score),1) overall FROM results");
@@ -81,7 +95,7 @@ renderSidebar('results');
   <div class="card-body" style="padding:12px 16px">
     <div style="display:flex;gap:10px;align-items:center">
       <i class="fa-solid fa-search" style="color:var(--text-muted)"></i>
-      <input type="text" id="tableSearch" class="form-control" placeholder="Search results…" style="border:none;background:transparent;padding:0;flex:1">
+      <input type="text" id="tableSearch" class="form-control" aria-label="Search results" placeholder="Search results…" style="border:none;background:transparent;padding:0;flex:1">
     </div>
   </div>
 </div>
@@ -104,9 +118,8 @@ renderSidebar('results');
           $cls=$sc>=75?'score-high':($sc>=50?'score-medium':'score-low');
           $recMap=['strong_yes'=>['✅ Strong Yes','green'],'yes'=>['👍 Yes','blue'],'maybe'=>['🤔 Maybe','amber'],'no'=>['❌ No','rose']];
           [$rl,$rc]=$recMap[$r['recommendation']]??['—','text-muted'];
-          // Check if candidate has ATS scan
-          $atsInfo = dbFetchOne("SELECT ats_score FROM resume_scans WHERE candidate_id=? ORDER BY scanned_at DESC LIMIT 1", 'i', $r['cid']);
-          $atsScore = $atsInfo ? (int)$atsInfo['ats_score'] : null;
+          // ATS score now comes pre-joined on $r (see LATERAL join above) — no per-row query.
+          $atsScore = $r['latest_ats_score'] !== null ? (int)$r['latest_ats_score'] : null;
         ?>
         <tr>
           <td class="td-muted"><?=$i+1?></td>
