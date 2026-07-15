@@ -10,11 +10,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') require_csrf();
 $uid = (int)currentUser()['id'];
 
 // Mark all as read — scoped to this HR user only (not candidate notifications)
-if (isset($_GET['mark_all'])) {
-    require_csrf(); // protect the GET-triggered action with CSRF from URL token
+// NOTE: this used to be a plain GET link (`?mark_all=1`). require_csrf() only ever
+// validates POST requests, so on a GET request it silently no-ops — the link's
+// mutation ran with no real CSRF protection, and any hiccup in the header()+exit
+// redirect (e.g. slow DB, output already sent) left the browser on a blank page
+// with nothing to render. It's now a real POST form with a CSRF token, exactly
+// like the "delete notification" action below, and uses the redirect() helper,
+// which safely falls back to a JS redirect if headers were already sent.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark_all') {
     dbExecute("UPDATE notifications SET is_read = 1 WHERE user_id = ?", 'i', $uid);
     setFlash('success', 'All notifications marked as read.');
-    header('Location: notifications.php'); exit;
+    redirect('notifications.php');
 }
 
 // Delete single — scoped to this HR user so no cross-user delete is possible
@@ -62,9 +68,13 @@ renderSidebar('');
     <p class="page-subtitle"><?= count($notifs) ?> total — <?= $unread ?> unread</p>
   </div>
   <?php if (!empty($notifs)): ?>
-  <a href="?mark_all=1" class="btn btn-secondary">
-    <i class="fa-solid fa-check-double"></i> Mark All Read
-  </a>
+  <form method="POST">
+    <?= csrf_field() ?>
+    <input type="hidden" name="action" value="mark_all">
+    <button type="submit" class="btn btn-secondary">
+      <i class="fa-solid fa-check-double"></i> Mark All Read
+    </button>
+  </form>
   <?php endif; ?>
 </div>
 

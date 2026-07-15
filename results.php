@@ -139,12 +139,12 @@ renderSidebar('results');
           <?php foreach(['technical_score','communication','problem_solving','cultural_fit'] as $f):
             $v=(int)$r[$f];$c2=$v>=75?'score-high':($v>=50?'score-medium':'score-low');
           ?>
-          <td><div class="score-bar <?=$c2?>" style="min-width:65px">
+          <td><div class="score-bar <?=$c2?>" style="min-width:100px">
             <div class="score-bar-track"><div class="score-bar-fill" data-pct="<?=$v?>"></div></div>
             <span class="score-text"><?=$v?></span></div></td>
           <?php endforeach; ?>
           <td>
-            <div class="score-bar <?=$cls?>" style="min-width:70px">
+            <div class="score-bar <?=$cls?>" style="min-width:110px">
               <div class="score-bar-track"><div class="score-bar-fill" data-pct="<?=$sc?>"></div></div>
               <span class="score-text fw-600"><?=$sc?>%</span>
             </div>

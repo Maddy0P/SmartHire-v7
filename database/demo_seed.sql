@@ -299,3 +299,42 @@ INSERT INTO interview_questions (category,difficulty,position_tag,question,max_s
 RAISE NOTICE 'Interview question bank seeded.';
 END
 $qbank$;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+--  QUESTION CATEGORY PRESETS — powers the "Select Question Category Preset"
+--  picker on Online Tests. The tables existed in the schema but were never
+--  seeded, so the picker only ever showed "No Preset" with nothing to load.
+--  One preset per existing question category, pulling in every question of
+--  that category from the bank seeded above.
+-- ═════════════════════════════════════════════════════════════════════════════
+DO $presets$
+DECLARE
+    cat RECORD;
+    new_preset_id INTEGER;
+    preset_labels JSONB := '{
+        "technical":     ["Technical Round",      "Core technical questions across roles"],
+        "hr":            ["HR Round",             "General HR and culture-fit questions"],
+        "behavioral":    ["Behavioral Round",      "STAR-style behavioral questions"],
+        "system_design": ["System Design Round",  "Architecture and system design questions"],
+        "coding":        ["Coding Round",          "Hands-on coding questions"],
+        "mcq":           ["Aptitude & MCQ Round",  "Objective multiple-choice questions"]
+    }';
+BEGIN
+IF EXISTS (SELECT 1 FROM question_presets WHERE name = 'Technical Round') THEN
+    RAISE NOTICE 'Question presets already seeded — skipping.'; RETURN;
+END IF;
+
+FOR cat IN SELECT DISTINCT category FROM interview_questions LOOP
+    IF preset_labels ? cat.category THEN
+        INSERT INTO question_presets (name, description)
+        VALUES (preset_labels->cat.category->>0, preset_labels->cat.category->>1)
+        RETURNING id INTO new_preset_id;
+
+        INSERT INTO question_preset_items (preset_id, question_id)
+        SELECT new_preset_id, id FROM interview_questions WHERE category = cat.category;
+    END IF;
+END LOOP;
+
+RAISE NOTICE 'Question category presets seeded.';
+END
+$presets$;

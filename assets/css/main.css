@@ -472,9 +472,9 @@ tbody td {
 
 /* ── Score bar ───────────────────────────────────────────── */
 .score-bar { display:flex; align-items:center; gap:10px; min-width:120px; }
-.score-bar-track { flex:1; height:6px; background:var(--bg-hover); border-radius:3px; overflow:hidden; }
-.score-bar-fill  { height:100%; border-radius:3px; transition:width .8s ease; }
-.score-text { font-size:12px; font-weight:700; min-width:28px; text-align:right; }
+.score-bar-track { flex:1; min-width:36px; height:7px; background:var(--bg-hover); border-radius:4px; overflow:hidden; }
+.score-bar-fill  { height:100%; border-radius:4px; transition:width .8s ease; }
+.score-text { font-size:12px; font-weight:700; min-width:44px; flex-shrink:0; white-space:nowrap; text-align:right; }
 .score-high   .score-bar-fill { background:linear-gradient(90deg,var(--emerald),#34d399); }
 .score-high   .score-text     { color:var(--emerald); }
 .score-medium .score-bar-fill { background:linear-gradient(90deg,var(--amber),#fbbf24); }
@@ -518,11 +518,17 @@ select.form-control { cursor:pointer; appearance:none;
 
 /* ── Modal ───────────────────────────────────────────────── */
 .modal-overlay {
-  position:fixed; inset:0;
+  position:fixed;
+  top:0; right:0; bottom:0; left:0; /* explicit fallback in case `inset` is ever unsupported/overridden */
+  inset:0;
+  width:100%; height:100%;
+  margin:0;
   background:rgba(0,0,0,.65);
   backdrop-filter:blur(4px);
   z-index:200;
   display:flex; align-items:center; justify-content:center;
+  overflow-y:auto; /* if the modal is taller than the viewport, the overlay scrolls
+                       instead of pinning the modal to the top */
   padding:20px;
   opacity:0; visibility:hidden;
   transition:all var(--transition);
@@ -534,7 +540,8 @@ select.form-control { cursor:pointer; appearance:none;
   border-radius:var(--radius-lg);
   width:100%;
   max-width:560px;
-  max-height:90vh;
+  max-height:calc(100vh - 40px);
+  margin:auto; /* keeps the modal vertically centered even if flex alignment is ever defeated */
   overflow-y:auto;
   transform:translateY(24px) scale(.97);
   transition:transform var(--transition);
@@ -782,6 +789,8 @@ select.form-control { cursor:pointer; appearance:none;
 @media (max-width:1024px) {
   .dashboard-grid { grid-template-columns:1fr; }
 }
+
+/* Tablet: sidebar becomes an off-canvas drawer, content goes full-width */
 @media (max-width:768px) {
   .sidebar { transform:translateX(-100%); }
   .sidebar.open { transform:translateX(0); }
@@ -792,10 +801,58 @@ select.form-control { cursor:pointer; appearance:none;
   .stats-grid { grid-template-columns:1fr 1fr; }
   .login-left { display:none; }
   .login-right { width:100%; }
+
+  /* Page header: title/subtitle stack above the action button instead of
+     squeezing onto one row and overflowing */
+  .page-header { flex-direction:column; align-items:stretch; gap:12px; margin-bottom:20px; }
+  .page-header > .btn, .page-header > a.btn, .page-header > form > .btn { width:100%; justify-content:center; }
+  .page-title { font-size:20px; }
+
+  /* Cards: less padding so content doesn't feel oversized on a narrow screen */
+  .card-body { padding:16px; }
+  .stat-card { padding:16px; gap:10px; }
+
+  /* Filters/search bars wrap instead of overflowing */
+  .filter-bar { flex-direction:column; align-items:stretch; }
+  .filter-bar .search { min-width:0; width:100%; }
+  .topbar-search { min-width:0; }
+
+  /* Modals: use nearly the full screen width/height and trim inner padding */
+  .modal { max-width:100%; max-height:calc(100vh - 24px); }
+  .modal-overlay { padding:12px; }
+  .modal-header, .modal-footer { padding:14px 16px; }
+  .modal-body { padding:16px; }
+  .modal-footer { flex-wrap:wrap; }
+  .modal-footer .btn { flex:1; justify-content:center; }
 }
+
 @media (max-width:480px) {
   .stats-grid { grid-template-columns:1fr; }
   .topbar-search { display:none; }
+
+  /* Buttons and text sized for a phone, not a desktop scaled down */
+  .btn { padding:8px 14px; font-size:12.5px; }
+  .btn-lg { padding:10px 18px; font-size:14px; }
+  .page-title { font-size:18px; }
+  .page-subtitle { font-size:12px; }
+
+  /* Tables: shrink type/padding and keep them horizontally scrollable rather
+     than forcing the whole layout to overflow the viewport */
+  .table-container { -webkit-overflow-scrolling:touch; }
+  thead th { padding:8px 10px; font-size:10px; }
+  tbody td { padding:10px; font-size:12.5px; }
+
+  .card-body { padding:14px; }
+  .page-content { padding:16px 12px; }
+}
+
+/* Small phones (iPhone SE / 360-390px class devices) */
+@media (max-width:390px) {
+  .page-content { padding:14px 10px; }
+  .stat-card { flex-direction:column; align-items:flex-start; gap:8px; }
+  .stat-icon { width:38px; height:38px; font-size:16px; }
+  .modal-footer { flex-direction:column-reverse; }
+  .modal-footer .btn { width:100%; }
 }
 
 /* ════════════════════════════════════════════════════════════

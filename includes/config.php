@@ -83,6 +83,29 @@ function sh_friendly_error(int $code = 500): void {
        . '<a href="dashboard.php" style="color:#7c3aed;font-weight:600;font-size:14px">&larr; Back to safety</a></div>';
 }
 
+// True fatal errors (out-of-memory, execution-time-limit, parse errors in included
+// files, etc.) never reach set_exception_handler() below -- they just stop execution.
+// With display_errors off in production that used to leave the browser on a blank
+// white screen with no explanation. This shutdown hook catches that case and renders
+// the same friendly error page users see for any other uncaught failure.
+register_shutdown_function(function () {
+    $err = error_get_last();
+    if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        sh_log_error('FATAL ' . $err['message'] . ' @ ' . $err['file'] . ':' . $err['line']);
+        if (!headers_sent()) {
+            if (SH_DEBUG) {
+                http_response_code(500);
+                echo '<pre style="padding:20px;font-family:monospace">' . htmlspecialchars($err['message']
+                    . ' @ ' . $err['file'] . ':' . $err['line']) . '</pre>';
+            } else {
+                sh_friendly_error();
+            }
+        }
+        // If headers/body were already partially sent, we can't safely rewrite the
+        // response -- but the error is now logged instead of disappearing silently.
+    }
+});
+
 set_exception_handler(function (Throwable $e) {
     sh_log_error('UNCAUGHT ' . get_class($e) . ': ' . $e->getMessage() .
                  ' @ ' . $e->getFile() . ':' . $e->getLine());

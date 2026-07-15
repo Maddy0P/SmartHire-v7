@@ -4,6 +4,12 @@ requireLogin();
 requireRole('recruiter');
 if ($_SERVER['REQUEST_METHOD'] === 'POST') require_csrf();
 
+// Preserve whichever category card the user had open (All Questions / Technical / etc.)
+// across create, update, and delete so the list doesn't silently jump back to
+// "All Questions" and make it look like the add/edit/delete didn't take effect.
+$returnCat = $_POST['return_cat'] ?? ($_GET['cat'] ?? '');
+$returnUrl = 'questions.php' . ($returnCat !== '' ? '?cat=' . urlencode($returnCat) : '');
+
 // ── Handle CRUD ───────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $fa = $_POST['form_action'] ?? '';
@@ -16,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             trim($_POST['question']), trim($_POST['expected_answer']), (int)$_POST['max_score']
         );
         setFlash($ok ? 'success' : 'error', $ok ? 'Question added to bank!' : 'Failed to add question.');
-        header('Location: questions.php'); exit;
+        redirect($returnUrl);
 
     } elseif ($fa === 'update') {
         $ok = dbExecute(
@@ -27,12 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             (int)$_POST['max_score'], (int)$_POST['question_id']
         );
         setFlash($ok ? 'success' : 'error', $ok ? 'Question updated!' : 'Update failed.');
-        header('Location: questions.php'); exit;
+        redirect($returnUrl);
 
     } elseif ($fa === 'delete') {
         dbExecute("DELETE FROM interview_questions WHERE id=?", 'i', (int)$_POST['question_id']);
         setFlash('success', 'Question deleted.');
-        header('Location: questions.php'); exit;
+        redirect($returnUrl);
     }
 }
 
@@ -143,10 +149,11 @@ renderSidebar('questions');
                       class="btn btn-secondary btn-sm btn-icon" title="Edit">
                 <i class="fa-solid fa-pen-to-square"></i>
               </button>
-              <form method="POST" style="display:inline">
+              <form method="POST" action="questions.php" style="display:inline">
       <?= csrf_field() ?>
                 <input type="hidden" name="form_action" value="delete">
                 <input type="hidden" name="question_id" value="<?= $q['id'] ?>">
+                <input type="hidden" name="return_cat" value="<?= htmlspecialchars($filterCat) ?>">
                 <button type="submit" class="btn btn-danger btn-sm btn-icon"
                         data-confirm="Delete this question?" title="Delete">
                   <i class="fa-solid fa-trash"></i>
@@ -169,9 +176,10 @@ renderSidebar('questions');
       <h3 class="modal-title"><i class="fa-solid fa-circle-question"></i> <?= $title ?></h3>
       <button class="modal-close" onclick="closeModal('<?= $modalId ?>')">×</button>
     </div>
-    <form method="POST">
+    <form method="POST" action="questions.php">
       <?= csrf_field() ?>
       <input type="hidden" name="form_action" value="<?= $action ?>">
+      <input type="hidden" name="return_cat" value="<?= htmlspecialchars($filterCat) ?>">
       <?php if($action==='update'): ?><input type="hidden" name="question_id" id="<?=$modalId?>_id"><?php endif; ?>
       <div class="modal-body">
         <div class="form-grid">
@@ -183,6 +191,7 @@ renderSidebar('questions');
               <option value="behavioral">Behavioral</option>
               <option value="system_design">System Design</option>
               <option value="coding">Coding</option>
+              <option value="mcq">MCQ / Aptitude</option>
             </select>
           </div>
           <div class="form-group">

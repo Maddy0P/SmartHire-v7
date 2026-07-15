@@ -256,19 +256,19 @@ renderSidebar('resume_scanner');
             </div>
           </td>
           <td>
-            <div class="score-bar <?=$cCls?>" style="min-width:70px">
+            <div class="score-bar <?=$cCls?>" style="min-width:120px">
               <div class="score-bar-track"><div class="score-bar-fill" data-pct="<?=$cPct?>"></div></div>
               <span class="score-text"><?=$scan['contact_score']?>/15</span>
             </div>
           </td>
           <td>
-            <div class="score-bar <?=$kCls?>" style="min-width:70px">
+            <div class="score-bar <?=$kCls?>" style="min-width:120px">
               <div class="score-bar-track"><div class="score-bar-fill" data-pct="<?=$kPct?>"></div></div>
               <span class="score-text"><?=$scan['keyword_score']?>/25</span>
             </div>
           </td>
           <td>
-            <div class="score-bar <?=$eCls?>" style="min-width:70px">
+            <div class="score-bar <?=$eCls?>" style="min-width:120px">
               <div class="score-bar-track"><div class="score-bar-fill" data-pct="<?=$ePct?>"></div></div>
               <span class="score-text"><?=$scan['experience_score']?>/20</span>
             </div>
