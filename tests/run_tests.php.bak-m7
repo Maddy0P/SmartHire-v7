@@ -349,11 +349,6 @@ ok(isset($R['breakdown'], $R['recommendation'], $R['hire_prob']), 'all V1 keys s
 ok(isset($R['v2']['overall'], $R['v2']['components'], $R['v2']['insights']), 'v2 section attached');
 ok($R['v2']['skills']['related'] !== [] || $R['v2']['skills']['matched'] !== [], 'v2 semantic results populated');
 
-require __DIR__ . '/assessment_core_tests.php';   // Module 8A — Assessment Platform Core
-require __DIR__ . '/assessment_center_tests.php'; // Module 8B — Assessment Center workflows
-require __DIR__ . '/assessment_player_tests.php'; // Module 8C — Candidate Player delivery
-require __DIR__ . '/interview_tests.php';         // Module 9 — Interview Management
-
 // ═════════════════════════════════════════════════════════════════════════════
 echo "\n══════════════════════════════════════════\n";
 echo "  RESULT: $P / $T passed\n";

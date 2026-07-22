@@ -1,0 +1,36 @@
+/* SmartHire tables — Bible P11 */
+.sh-v8 .sh-table-wrap{overflow-x:auto}
+.sh-v8 .sh-table{width:100%;border-collapse:collapse;font-size:var(--sh-fs-sm)}
+.sh-v8 .sh-table thead th{position:sticky;top:0;background:var(--sh-surface-2);font-size:var(--sh-fs-xs);letter-spacing:.03em;text-transform:uppercase;font-weight:600;color:var(--sh-text-2);text-align:left;padding:var(--sh-sp-3) var(--sh-sp-4);border-bottom:1px solid var(--sh-border);white-space:nowrap;z-index:1}
+.sh-v8 .sh-table tbody td{padding:var(--sh-sp-3) var(--sh-sp-4);border-bottom:1px solid var(--sh-border);vertical-align:middle}
+.sh-v8 .sh-table tbody tr{transition:background var(--sh-dur-fast) var(--sh-ease)}
+.sh-v8 .sh-table tbody tr:hover{background:var(--sh-surface-2)}
+.sh-v8 .sh-table tbody tr:last-child td{border-bottom:0}
+.sh-v8 .sh-table .num{text-align:right;font-feature-settings:"tnum"}
+.sh-v8 .sh-table .sh-cell-main{font-weight:500;color:var(--sh-text)}
+.sh-v8 .sh-cell-sub{font-size:var(--sh-fs-xs);color:var(--sh-text-muted)}
+.sh-v8 .sh-row-actions{display:flex;gap:var(--sh-sp-1);opacity:0;transition:opacity var(--sh-dur-fast) var(--sh-ease)}
+.sh-v8 tr:hover .sh-row-actions,.sh-v8 tr:focus-within .sh-row-actions{opacity:1}
+/* Score bar (mini) */
+.sh-v8 .sh-score{display:flex;align-items:center;gap:var(--sh-sp-2);min-width:110px}
+.sh-v8 .sh-score-track{flex:1;height:6px;border-radius:var(--sh-radius-pill);background:var(--sh-surface-2);overflow:hidden}
+.sh-v8 .sh-score-fill{height:100%;border-radius:var(--sh-radius-pill)}
+.sh-v8 .sh-score-fill.hi{background:var(--sh-success)}
+.sh-v8 .sh-score-fill.mid{background:var(--sh-warning)}
+.sh-v8 .sh-score-fill.lo{background:var(--sh-danger)}
+.sh-v8 .sh-score-n{font-feature-settings:"tnum";font-size:var(--sh-fs-xs);font-weight:600;width:34px;text-align:right}
+/* Bulk action bar */
+.sh-v8 .sh-bulkbar{display:none;align-items:center;gap:var(--sh-sp-3);padding:var(--sh-sp-2) var(--sh-sp-4);background:var(--sh-accent-bg);border:1px solid var(--sh-accent);border-radius:var(--sh-radius-sm);margin-bottom:var(--sh-sp-3);font-weight:500;color:var(--sh-accent)}
+.sh-v8 .sh-bulkbar.open{display:flex;animation:sh-slide-up var(--sh-dur) var(--sh-ease)}
+.sh-v8 .sh-check{width:16px;height:16px;accent-color:var(--sh-accent);cursor:pointer}
+/* Responsive tables — P24: cards, not squeeze */
+@media (max-width:767px){
+  .sh-v8 .sh-table thead{position:absolute;clip:rect(0,0,0,0)}
+  .sh-v8 .sh-table,.sh-v8 .sh-table tbody,.sh-v8 .sh-table tr,.sh-v8 .sh-table td{display:block}
+  .sh-v8 .sh-table tr{border:1px solid var(--sh-border);border-radius:var(--sh-radius);margin:0 var(--sh-sp-4) var(--sh-sp-3);padding:var(--sh-sp-2) 0;background:var(--sh-surface)}
+  .sh-v8 .sh-table td{border:0;padding:var(--sh-sp-1) var(--sh-sp-4)}
+  .sh-v8 .sh-table td[data-th]::before{content:attr(data-th);display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--sh-text-muted)}
+  .sh-v8 .sh-table td.sh-hide-mobile{display:none}
+  .sh-v8 .sh-row-actions{opacity:1}
+  .sh-v8 .sh-table .num{text-align:left}
+}

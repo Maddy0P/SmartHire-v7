@@ -1,0 +1,46 @@
+/* SmartHire components — Bible P9/P12/P19/P20 (buttons, badges, avatar, empty states) */
+.sh-v8 .sh-btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--sh-sp-2);height:36px;padding:0 var(--sh-sp-4);border-radius:var(--sh-radius-sm);font:500 var(--sh-fs-sm)/1 var(--sh-font);cursor:pointer;text-decoration:none;border:1px solid transparent;transition:background var(--sh-dur-fast) var(--sh-ease),border-color var(--sh-dur-fast) var(--sh-ease);white-space:nowrap}
+.sh-v8 .sh-btn:active{transform:scale(.98)}
+.sh-v8 .sh-btn-primary{background:var(--sh-accent);color:#fff}
+.sh-v8 .sh-btn-primary:hover{background:var(--sh-accent-hover)}
+.sh-v8 .sh-btn-secondary{background:var(--sh-surface);border-color:var(--sh-border-strong);color:var(--sh-text)}
+.sh-v8 .sh-btn-secondary:hover{border-color:var(--sh-text-muted)}
+.sh-v8 .sh-btn-ghost{background:transparent;color:var(--sh-text-2)}
+.sh-v8 .sh-btn-ghost:hover{background:var(--sh-surface-2);color:var(--sh-text)}
+.sh-v8 .sh-btn-danger{background:var(--sh-danger);color:#fff}
+.sh-v8 .sh-btn-danger:hover{filter:brightness(.92)}
+.sh-v8 .sh-btn-sm{height:32px;padding:0 var(--sh-sp-3);font-size:var(--sh-fs-xs)}
+.sh-v8 .sh-btn[disabled]{opacity:.5;cursor:not-allowed;pointer-events:none}
+/* Badges & chips — status = color + label (+icon), never color alone */
+.sh-v8 .sh-badge{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 var(--sh-sp-2);border-radius:var(--sh-radius-sm);font-size:var(--sh-fs-xs);font-weight:500;border:1px solid;text-transform:capitalize}
+.sh-v8 .sh-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.sh-v8 .sh-badge-success{background:var(--sh-success-bg);border-color:var(--sh-success-border);color:var(--sh-success)}
+.sh-v8 .sh-badge-warning{background:var(--sh-warning-bg);border-color:var(--sh-warning-border);color:var(--sh-warning)}
+.sh-v8 .sh-badge-danger{background:var(--sh-danger-bg);border-color:var(--sh-danger-border);color:var(--sh-danger)}
+.sh-v8 .sh-badge-info{background:var(--sh-info-bg);border-color:var(--sh-info-border);color:var(--sh-info)}
+.sh-v8 .sh-badge-neutral{background:var(--sh-surface-2);border-color:var(--sh-border);color:var(--sh-text-2)}
+.sh-v8 .sh-chip{display:inline-flex;align-items:center;gap:var(--sh-sp-2);height:30px;padding:0 var(--sh-sp-3);border-radius:var(--sh-radius-pill);border:1px solid var(--sh-border-strong);background:var(--sh-surface);color:var(--sh-text-2);font-size:var(--sh-fs-xs);font-weight:500;text-decoration:none;transition:border-color var(--sh-dur-fast) var(--sh-ease)}
+.sh-v8 .sh-chip:hover{border-color:var(--sh-text-muted);color:var(--sh-text)}
+.sh-v8 .sh-chip.active{background:var(--sh-accent-bg);border-color:var(--sh-accent);color:var(--sh-accent)}
+.sh-v8 .sh-chip .sh-count{font-feature-settings:"tnum";opacity:.75}
+/* Avatar */
+.sh-v8 .sh-avatar{width:32px;height:32px;border-radius:var(--sh-radius-pill);background:var(--sh-accent-bg);color:var(--sh-accent);display:inline-flex;align-items:center;justify-content:center;font-weight:600;font-size:var(--sh-fs-xs);flex-shrink:0}
+.sh-v8 .sh-avatar-sm{width:24px;height:24px;font-size:10px}
+/* Empty state — P20 */
+.sh-v8 .sh-empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:var(--sh-sp-9) var(--sh-sp-6);gap:var(--sh-sp-2)}
+.sh-v8 .sh-empty-icon{width:48px;height:48px;border-radius:var(--sh-radius-pill);background:var(--sh-accent-bg);color:var(--sh-accent);display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:var(--sh-sp-2)}
+.sh-v8 .sh-empty h3{margin:0;font-size:var(--sh-fs-md);font-weight:600}
+.sh-v8 .sh-empty p{margin:0;color:var(--sh-text-muted);font-size:var(--sh-fs-sm);max-width:360px}
+/* AI chip — P12/P17: mandatory label on AI-derived values */
+.sh-v8 .sh-ai-chip{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 var(--sh-sp-2);border-radius:var(--sh-radius-sm);background:var(--sh-ai-bg);color:var(--sh-ai);font-size:11px;font-weight:600;letter-spacing:.02em}
+/* Tabs — Bible P13 */
+.sh-v8 .sh-tabs{display:flex;gap:var(--sh-sp-1);border-bottom:1px solid var(--sh-border);margin-bottom:var(--sh-sp-5);overflow-x:auto}
+.sh-v8 .sh-tab{background:none;border:0;border-bottom:2px solid transparent;padding:var(--sh-sp-2) var(--sh-sp-3) var(--sh-sp-3);font:500 var(--sh-fs-sm)/var(--sh-lh-sm) var(--sh-font);color:var(--sh-text-2);cursor:pointer;white-space:nowrap;transition:color var(--sh-dur-fast) var(--sh-ease)}
+.sh-v8 .sh-tab:hover{color:var(--sh-text)}
+.sh-v8 .sh-tab[aria-selected="true"]{color:var(--sh-accent);border-bottom-color:var(--sh-accent)}
+/* Chip variants + profile bits */
+.sh-v8 .sh-chip-danger{border-color:var(--sh-danger-border);background:var(--sh-danger-bg);color:var(--sh-danger)}
+.sh-v8 .sh-avatar-lg{width:56px;height:56px;font-size:var(--sh-fs-lg)}
+.sh-v8 .sh-w-130{width:130px;flex-shrink:0}
+.sh-v8 .sh-resume-text{background:var(--sh-surface-2);border:1px solid var(--sh-border);border-radius:var(--sh-radius-sm);padding:var(--sh-sp-3);font:400 var(--sh-fs-xs)/var(--sh-lh-sm) var(--sh-mono);white-space:pre-wrap;max-height:320px;overflow-y:auto;margin:var(--sh-sp-2) 0 0}
+@media (max-width:1023px){.sh-v8 .sh-tier2{grid-template-columns:1fr}}

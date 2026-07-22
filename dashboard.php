@@ -57,171 +57,204 @@ $pendingTests = dbFetchAll("
     LIMIT 3
 ");
 
-renderHead('Dashboard');
+// ── v8 presentation aggregates (read-only; Bible P12/P15 — funnel, deltas, sparkline) ──
+$byStatus = [];
+foreach (dbFetchAll("SELECT status, COUNT(*) AS n FROM candidates GROUP BY status") as $r) {
+    $byStatus[$r['status']] = (int)$r['n'];
+}
+$delta = dbFetchOne("
+    SELECT
+        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '30 days') AS cur,
+        COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE - INTERVAL '60 days'
+                           AND created_at <  CURRENT_DATE - INTERVAL '30 days') AS prev
+    FROM candidates
+") ?? ['cur' => 0, 'prev' => 0];
+$spark = array_fill(0, 8, 0);
+foreach (dbFetchAll("
+    SELECT (CURRENT_DATE - created_at::date) / 7 AS wk, COUNT(*) AS n
+    FROM candidates
+    WHERE created_at >= CURRENT_DATE - INTERVAL '56 days'
+    GROUP BY 1
+") as $r) {
+    $i = 7 - (int)$r['wk'];
+    if ($i >= 0 && $i < 8) $spark[$i] = (int)$r['n'];
+}
+
+
+renderHead('Dashboard', true);
 renderSidebar('dashboard');
+$funnel = [
+    ['Applied',     $total_candidates],
+    ['Scheduled',   ($byStatus['scheduled'] ?? 0) + ($byStatus['interviewed'] ?? 0) + ($byStatus['hired'] ?? 0)],
+    ['Interviewed', ($byStatus['interviewed'] ?? 0) + ($byStatus['hired'] ?? 0)],
+    ['Hired',       $byStatus['hired'] ?? 0],
+];
+$fMax = max(1, $funnel[0][1]);
 ?>
 
-<!-- Page Header -->
-<div class="page-header">
-  <div class="page-header-left">
-    <div class="breadcrumb"><i class="fa-solid fa-house"></i> Home</div>
-    <h1 class="page-title">Dashboard</h1>
-    <p class="page-subtitle">Welcome back, <?= htmlspecialchars(currentUser()['name']) ?>! Here's what's happening today.</p>
+<div class="sh-page-header">
+  <div>
+    <h1 class="sh-page-title">Dashboard</h1>
+    <p class="sh-page-sub">Welcome back, <?= htmlspecialchars(currentUser()['name']) ?>. Here's what needs you today.</p>
   </div>
-  <a href="candidates.php?action=new" class="btn btn-primary">
-    <i class="fa-solid fa-plus"></i> Add Candidate
+  <a href="candidates.php?action=new" class="sh-btn sh-btn-primary">
+    <i class="fa-solid fa-plus" aria-hidden="true"></i> Add candidate
   </a>
 </div>
 
-<!-- Stat Cards -->
-<div class="stats-grid">
-  <div class="stat-card blue">
-    <div class="stat-icon blue"><i class="fa-solid fa-users"></i></div>
-    <div class="stat-info">
-      <div class="stat-value"><?= $total_candidates ?></div>
-      <div class="stat-label">Total Candidates</div>
-      <div class="stat-delta up"><i class="fa-solid fa-arrow-up"></i> Active pipeline</div>
+<!-- KPI band — Bible P12 anatomy -->
+<div class="sh-kpi-grid">
+  <div class="sh-kpi">
+    <div class="sh-kpi-top"><i class="fa-solid fa-users" aria-hidden="true"></i>Total candidates</div>
+    <div class="sh-kpi-value"><?= $total_candidates ?> <?= sh_delta_chip((int)$delta['cur'], (int)$delta['prev']) ?></div>
+    <div class="sh-kpi-foot">
+      <span>vs. previous 30 days</span>
+      <?= sh_sparkline($spark) ?>
     </div>
+    <div class="sh-kpi-foot"><a href="candidates.php">View all →</a></div>
   </div>
-  <div class="stat-card amber">
-    <div class="stat-icon amber"><i class="fa-solid fa-calendar-days"></i></div>
-    <div class="stat-info">
-      <div class="stat-value"><?= $total_scheduled ?></div>
-      <div class="stat-label">Upcoming Interviews</div>
-      <div class="stat-delta up"><i class="fa-solid fa-calendar"></i> Scheduled</div>
-    </div>
+  <div class="sh-kpi">
+    <div class="sh-kpi-top"><i class="fa-solid fa-calendar-check" aria-hidden="true"></i>Upcoming interviews</div>
+    <div class="sh-kpi-value"><?= $total_scheduled ?></div>
+    <div class="sh-kpi-foot"><span>scheduled of <?= $total_interviews ?> total</span><a href="interviews.php">Schedule →</a></div>
   </div>
-  <div class="stat-card green">
-    <div class="stat-icon green"><i class="fa-solid fa-handshake"></i></div>
-    <div class="stat-info">
-      <div class="stat-value"><?= $total_hired ?></div>
-      <div class="stat-label">Hired This Cycle</div>
-      <div class="stat-delta up"><i class="fa-solid fa-arrow-up"></i> Offers made</div>
-    </div>
+  <div class="sh-kpi">
+    <div class="sh-kpi-top"><i class="fa-solid fa-hourglass-half" aria-hidden="true"></i>Awaiting review</div>
+    <div class="sh-kpi-value"><?= $total_pending ?></div>
+    <div class="sh-kpi-foot"><span>pending candidates</span><a href="candidates.php?status=pending">Review →</a></div>
   </div>
-  <div class="stat-card violet">
-    <div class="stat-icon violet"><i class="fa-solid fa-robot"></i></div>
-    <div class="stat-info">
-      <div class="stat-value"><?= $avg_score ?>%</div>
-      <div class="stat-label">Avg AI Score</div>
-      <div class="stat-delta up"><i class="fa-solid fa-chart-line"></i> Across all</div>
-    </div>
-  </div>
-  <div class="stat-card rose">
-    <div class="stat-icon rose"><i class="fa-solid fa-hourglass-half"></i></div>
-    <div class="stat-info">
-      <div class="stat-value"><?= $total_pending ?></div>
-      <div class="stat-label">Awaiting Review</div>
-      <div class="stat-delta down"><i class="fa-solid fa-clock"></i> Needs action</div>
-    </div>
+  <div class="sh-kpi">
+    <div class="sh-kpi-top"><i class="fa-solid fa-gauge-high" aria-hidden="true"></i>Avg resume score <span class="sh-ai-chip" title="Computed by the SmartHire scoring engine"><i class="fa-solid fa-sparkles" aria-hidden="true"></i>AI</span></div>
+    <div class="sh-kpi-value"><?= $avg_score ?: '—' ?><?= $avg_score ? '<span class="sh-kpi-unit">%</span>' : '' ?></div>
+    <div class="sh-kpi-foot"><span>across scored candidates</span><a href="candidate_resumes.php">Scores →</a></div>
   </div>
 </div>
 
-<!-- Quick Test Notifications -->
 <?php if (!empty($pendingTests)): ?>
-<div style="background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px 20px;margin-bottom:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-  <div style="width:36px;height:36px;border-radius:8px;background:rgba(124,58,237,.2);display:flex;align-items:center;justify-content:center;color:#a78bfa;font-size:16px;flex-shrink:0">
-    <i class="fa-solid fa-laptop-code"></i>
+<div class="sh-card sh-mb-6 sh-alert-warning">
+  <div class="sh-flex sh-items-center sh-gap-3">
+    <i class="fa-solid fa-laptop-code sh-warning-text" aria-hidden="true"></i>
+    <div class="sh-flex-1">
+      <strong class="sh-warning-text"><?= count($pendingTests) ?> active test<?= count($pendingTests) > 1 ? 's' : '' ?> awaiting submission</strong>
+      <div class="sh-fs-xs sh-text-2"><?= implode(' · ', array_map(fn($t) => htmlspecialchars($t['cname']), $pendingTests)) ?></div>
+    </div>
+    <a href="online_tests.php" class="sh-btn sh-btn-secondary sh-btn-sm sh-shrink-0">View tests</a>
   </div>
-  <div style="flex:1">
-    <div style="font-size:13px;font-weight:700;color:#c4b5fd;margin-bottom:3px"><?= count($pendingTests) ?> active test(s) awaiting candidate submission</div>
-    <div style="font-size:12px;color:var(--text-muted)"><?= implode(' · ', array_map(fn($t) => htmlspecialchars($t['cname']), $pendingTests)) ?></div>
-  </div>
-  <a href="online_tests.php" class="btn btn-secondary btn-sm" style="flex-shrink:0">View Tests →</a>
 </div>
 <?php endif; ?>
 
-<!-- Main Grid -->
-<div class="dashboard-grid">
-
-  <!-- Recent Candidates -->
-  <div class="card">
-    <div class="card-header">
+<!-- Tier 2: funnel (page hero) + today's queue -->
+<div class="sh-tier2">
+  <section class="sh-card sh-card-hero" aria-labelledby="funnel-title">
+    <div class="sh-card-header">
       <div>
-        <div class="card-title">Recent Candidates</div>
-        <div class="card-subtitle">Latest entries in the pipeline</div>
+        <h2 class="sh-card-title" id="funnel-title">Where do candidates stand?</h2>
+        <p class="sh-card-sub">Recruitment funnel across all positions</p>
       </div>
-      <a href="candidates.php" class="btn btn-secondary btn-sm">View All</a>
     </div>
-    <div class="table-container">
-      <table>
-        <thead>
-          <tr>
-            <th>Candidate</th>
-            <th>Position</th>
-            <th>AI Score</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($recent as $c): ?>
-          <?php
-            $score = (int)$c['ai_score'];
-            $scoreClass = $score >= 75 ? 'score-high' : ($score >= 50 ? 'score-medium' : 'score-low');
-          ?>
-          <tr>
-            <td>
-              <div class="d-flex align-center gap-2">
-                <div class="avatar sm"><?= strtoupper(substr($c['name'],0,1)) ?></div>
-                <div>
-                  <div class="fw-600"><?= htmlspecialchars($c['name']) ?></div>
-                  <div class="td-muted"><?= htmlspecialchars($c['email']) ?></div>
-                </div>
-              </div>
-            </td>
-            <td><?= htmlspecialchars($c['position']) ?></td>
-            <td>
-              <div class="score-bar <?= $scoreClass ?>">
-                <div class="score-bar-track">
-                  <div class="score-bar-fill" data-pct="<?= $score ?>"></div>
-                </div>
-                <span class="score-text"><?= $score ?>%</span>
-              </div>
-            </td>
-            <td><span class="badge-status badge-<?= $c['status'] ?>"><?= $c['status'] ?></span></td>
-          </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Upcoming Interviews -->
-  <div class="card">
-    <div class="card-header">
-      <div>
-        <div class="card-title">Upcoming Interviews</div>
-        <div class="card-subtitle">Next scheduled sessions</div>
-      </div>
-      <a href="interviews.php" class="btn btn-secondary btn-sm">All</a>
-    </div>
-    <div class="card-body">
-      <?php if (empty($upcoming)): ?>
-      <div class="empty-state">
-        <i class="fa-regular fa-calendar-xmark"></i>
-        <p>No upcoming interviews</p>
-      </div>
-      <?php else: ?>
-      <?php foreach ($upcoming as $iv): ?>
-      <div class="interview-item">
-        <div class="interview-time-box">
-          <div class="time-day"><?= date('d', strtotime($iv['scheduled_date'])) ?></div>
-          <div class="time-month"><?= date('M', strtotime($iv['scheduled_date'])) ?></div>
-        </div>
-        <div style="flex:1;min-width:0">
-          <div class="fw-600" style="font-size:13.5px"><?= htmlspecialchars($iv['candidate_name']) ?></div>
-          <div class="td-muted"><?= htmlspecialchars($iv['position']) ?></div>
-          <div style="margin-top:4px;display:flex;gap:6px;align-items:center">
-            <span class="badge-status badge-scheduled"><?= $iv['type'] ?></span>
-            <span class="text-muted text-sm"><?= date('g:i A', strtotime($iv['scheduled_time'])) ?></span>
-          </div>
-        </div>
+    <div class="sh-funnel">
+      <?php foreach ($funnel as [$label, $n]): ?>
+      <div class="sh-funnel-row">
+        <span><?= $label ?></span>
+        <div class="sh-funnel-track"><div class="sh-funnel-fill" style="width:<?= round($n / $fMax * 100, 1) ?>%"></div></div>
+        <span class="sh-funnel-n"><?= $n ?></span>
       </div>
       <?php endforeach; ?>
-      <?php endif; ?>
     </div>
-  </div>
+    <?php if ($total_candidates === 0): ?>
+    <div class="sh-empty">
+      <div class="sh-empty-icon"><i class="fa-solid fa-users" aria-hidden="true"></i></div>
+      <h3>No candidates yet</h3>
+      <p>Your funnel fills as candidates apply or are added to the pipeline.</p>
+      <a href="candidates.php?action=new" class="sh-btn sh-btn-primary sh-mt-2">Add your first candidate</a>
+    </div>
+    <?php endif; ?>
+  </section>
 
+  <section class="sh-card" aria-labelledby="today-title">
+    <div class="sh-card-header">
+      <div>
+        <h2 class="sh-card-title" id="today-title">Upcoming interviews</h2>
+        <p class="sh-card-sub">Next scheduled sessions</p>
+      </div>
+      <a href="interviews.php" class="sh-btn sh-btn-ghost sh-btn-sm">All</a>
+    </div>
+    <?php if (empty($upcoming)): ?>
+    <div class="sh-empty">
+      <div class="sh-empty-icon"><i class="fa-regular fa-calendar" aria-hidden="true"></i></div>
+      <h3>Nothing scheduled</h3>
+      <p>Interviews you schedule will appear here with their date and time.</p>
+      <a href="interviews.php" class="sh-btn sh-btn-secondary sh-btn-sm sh-mt-2">Schedule an interview</a>
+    </div>
+    <?php else: ?>
+    <?php foreach ($upcoming as $iv): ?>
+    <div class="sh-listrow">
+      <div class="sh-datebox">
+        <div class="d"><?= date('d', strtotime($iv['scheduled_date'])) ?></div>
+        <div class="m"><?= date('M', strtotime($iv['scheduled_date'])) ?></div>
+      </div>
+      <div class="sh-flex-1">
+        <div class="sh-cell-main sh-truncate"><?= htmlspecialchars($iv['candidate_name']) ?></div>
+        <div class="sh-cell-sub sh-truncate"><?= htmlspecialchars($iv['position']) ?></div>
+      </div>
+      <div class="sh-right">
+        <span class="sh-badge sh-badge-info"><?= htmlspecialchars($iv['type']) ?></span>
+        <div class="sh-cell-sub sh-tnum"><?= date('g:i A', strtotime($iv['scheduled_time'])) ?></div>
+      </div>
+    </div>
+    <?php endforeach; ?>
+    <?php endif; ?>
+  </section>
 </div>
+
+<!-- Tier 3: recent candidates -->
+<section class="sh-card sh-card-flush" aria-labelledby="recent-title">
+  <div class="sh-card-header">
+    <div>
+      <h2 class="sh-card-title" id="recent-title">Recent candidates</h2>
+      <p class="sh-card-sub">Latest entries in the pipeline</p>
+    </div>
+    <a href="candidates.php" class="sh-btn sh-btn-ghost sh-btn-sm">View all</a>
+  </div>
+  <?php if (empty($recent)): ?>
+  <div class="sh-empty">
+    <div class="sh-empty-icon"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></div>
+    <h3>No candidates yet</h3>
+    <p>Candidates appear here as soon as they're added or apply.</p>
+  </div>
+  <?php else: ?>
+  <div class="sh-table-wrap">
+    <table class="sh-table">
+      <thead>
+        <tr><th scope="col">Candidate</th><th scope="col">Position</th><th scope="col">Score</th><th scope="col">Status</th></tr>
+      </thead>
+      <tbody>
+        <?php foreach ($recent as $c): $score = (int)$c['ai_score'];
+              $cls = $score >= 75 ? 'hi' : ($score >= 50 ? 'mid' : 'lo'); ?>
+        <tr>
+          <td data-th="Candidate">
+            <div class="sh-flex sh-items-center sh-gap-3">
+              <span class="sh-avatar" aria-hidden="true"><?= strtoupper(substr($c['name'], 0, 1)) ?></span>
+              <div class="sh-flex-1">
+                <div class="sh-cell-main sh-truncate"><?= htmlspecialchars($c['name']) ?></div>
+                <div class="sh-cell-sub sh-truncate sh-mono"><?= htmlspecialchars($c['email']) ?></div>
+              </div>
+            </div>
+          </td>
+          <td data-th="Position"><?= htmlspecialchars($c['position']) ?></td>
+          <td data-th="Score">
+            <div class="sh-score">
+              <div class="sh-score-track"><div class="sh-score-fill <?= $cls ?>" style="width:<?= $score ?>%"></div></div>
+              <span class="sh-score-n"><?= $score ?>%</span>
+            </div>
+          </td>
+          <td data-th="Status"><?= sh_status_badge($c['status']) ?></td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</section>
 
 <?php renderFooter(); ?>

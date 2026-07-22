@@ -1,0 +1,41 @@
+/* SmartHire Design Tokens — Bible v1.2, Part 25. Single source of truth.
+   Namespace --sh-* only; legacy variables in main.css remain untouched. */
+:root{
+  /* Color · neutrals (P2.1) */
+  --sh-bg:#F8FAFC; --sh-surface:#FFFFFF; --sh-surface-2:#F1F5F9;
+  --sh-border:#E2E8F0; --sh-border-strong:#CBD5E1;
+  --sh-text:#0F172A; --sh-text-2:#475569; --sh-text-muted:#64748B; --sh-text-disabled:#94A3B8;
+  /* Color · accent (P2.2) */
+  --sh-accent:#4F46E5; --sh-accent-hover:#4338CA; --sh-accent-bg:#EEF2FF;
+  /* Color · semantic (P2.3) */
+  --sh-success:#15803D; --sh-success-bg:#F0FDF4; --sh-success-border:#BBF7D0;
+  --sh-warning:#B45309; --sh-warning-bg:#FFFBEB; --sh-warning-border:#FDE68A;
+  --sh-danger:#B91C1C;  --sh-danger-bg:#FEF2F2;  --sh-danger-border:#FECACA;
+  --sh-info:#1D4ED8;    --sh-info-bg:#EFF6FF;    --sh-info-border:#BFDBFE;
+  /* Color · AI module accent (P2.4) */
+  --sh-ai:#6D28D9; --sh-ai-bg:#F5F3FF;
+  /* Type (P3) — workhorse: fs-sm recruiter, fs-md candidate */
+  --sh-font:'Inter',system-ui,sans-serif;
+  --sh-mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --sh-fs-xs:12px;   --sh-lh-xs:16px;
+  --sh-fs-sm:13.5px; --sh-lh-sm:20px;
+  --sh-fs-md:15px;   --sh-lh-md:22px;
+  --sh-fs-lg:18px;   --sh-lh-lg:26px;
+  --sh-fs-xl:24px;   --sh-lh-xl:32px;
+  --sh-fs-2xl:32px;  --sh-lh-2xl:38px;
+  /* Space (P4) — 4px grid */
+  --sh-sp-1:4px; --sh-sp-2:8px; --sh-sp-3:12px; --sh-sp-4:16px; --sh-sp-5:20px;
+  --sh-sp-6:24px; --sh-sp-7:32px; --sh-sp-8:40px; --sh-sp-9:48px; --sh-sp-10:64px;
+  /* Radius (P6) — vocabulary: 6/10/14/pill only */
+  --sh-radius-sm:6px; --sh-radius:10px; --sh-radius-lg:14px; --sh-radius-pill:9999px;
+  /* Elevation (P7, v1.2 flat) */
+  --sh-shadow-hero:0 1px 3px rgba(15,23,42,.06),0 8px 24px -12px rgba(15,23,42,.12);
+  --sh-shadow-overlay:0 12px 40px -12px rgba(15,23,42,.28);
+  --sh-ring-accent:0 0 0 1px var(--sh-accent);
+  --sh-ring-border:0 0 0 1px var(--sh-border-strong);
+  /* Motion (P22) */
+  --sh-dur-fast:120ms; --sh-dur:180ms; --sh-dur-slow:280ms;
+  --sh-ease:cubic-bezier(.2,0,0,1);
+  /* Z-index (P25) */
+  --sh-z-nav:100; --sh-z-overlay:200; --sh-z-modal:300; --sh-z-toast:400;
+}

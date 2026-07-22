@@ -1,0 +1,233 @@
+<?php
+// ═════════════════════════════════════════════════════════════════════════════
+//  Repository layer (Module 8A) — the ONLY place assessment SQL lives.
+//  Repositories wrap the EXISTING tables (no parallel banks, no duplicate
+//  submission system) behind a DbAdapter so engines stay pure and tests can
+//  inject an in-memory fake. GlobalDb delegates to the frozen platform
+//  helpers (dbFetchAll/dbFetchOne/dbExecute) in includes/config.php.
+// ═════════════════════════════════════════════════════════════════════════════
+declare(strict_types=1);
+
+namespace SmartHire\Assessment\Shared;
+
+use SmartHire\Assessment\Domain\Question;
+use SmartHire\Assessment\Domain\QuestionPool;
+use SmartHire\Assessment\Domain\Assessment;
+use SmartHire\Assessment\Domain\Submission;
+
+interface DbAdapter
+{
+    public function fetchAll(string $sql, string $types = '', mixed ...$params): array;
+    public function fetchOne(string $sql, string $types = '', mixed ...$params): ?array;
+    /** @return bool|int insert id when available, else bool */
+    public function execute(string $sql, string $types = '', mixed ...$params): bool|int;
+}
+
+/** Production adapter — delegates to the frozen global DB helpers. */
+final class GlobalDb implements DbAdapter
+{
+    public function fetchAll(string $sql, string $types = '', mixed ...$params): array
+    { return \dbFetchAll($sql, $types, ...$params); }
+    public function fetchOne(string $sql, string $types = '', mixed ...$params): ?array
+    { return \dbFetchOne($sql, $types, ...$params); }
+    public function execute(string $sql, string $types = '', mixed ...$params): bool|int
+    { return \dbExecute($sql, $types, ...$params); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+final class QuestionRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?Question
+    {
+        $r = $this->db->fetchOne("SELECT * FROM interview_questions WHERE id=?", 'i', $id);
+        return $r ? Question::fromRow($r) : null;
+    }
+
+    /** @param int[] $ids @return array<int,Question> keyed by id, input order preserved */
+    public function findMany(array $ids): array
+    {
+        if (!$ids) return [];
+        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        $rows = $this->db->fetchAll("SELECT * FROM interview_questions WHERE id IN ($ph)",
+                                    str_repeat('i', count($ids)), ...array_map('intval', $ids));
+        $byId = [];
+        foreach ($rows as $r) $byId[(int)$r['id']] = Question::fromRow($r);
+        $out = [];
+        foreach ($ids as $id) if (isset($byId[(int)$id])) $out[(int)$id] = $byId[(int)$id];
+        return $out;
+    }
+
+    /** Active questions of a pool grouped by difficulty (Generator input). */
+    public function poolByDifficulty(int $poolId): array
+    {
+        $rows = $this->db->fetchAll(
+            "SELECT iq.id, iq.difficulty FROM question_preset_items pi
+             JOIN interview_questions iq ON iq.id = pi.question_id
+             WHERE pi.preset_id=? AND COALESCE(iq.status,'active')='active'", 'i', $poolId);
+        $out = ['easy' => [], 'medium' => [], 'hard' => []];
+        foreach ($rows as $r) $out[$r['difficulty'] ?? 'medium'][] = (int)$r['id'];
+        return $out;
+    }
+}
+
+final class PoolRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?QuestionPool
+    {
+        $r = $this->db->fetchOne("SELECT * FROM question_presets WHERE id=?", 'i', $id);
+        if (!$r) return null;
+        $ids = array_column($this->db->fetchAll(
+            "SELECT question_id FROM question_preset_items WHERE preset_id=?", 'i', $id), 'question_id');
+        return QuestionPool::fromRow($r, $ids);
+    }
+}
+
+final class TemplateRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?array
+    {
+        $t = $this->db->fetchOne("SELECT * FROM assessment_templates WHERE id=?", 'i', $id);
+        if (!$t) return null;
+        $t['config'] = Question::jsonb($t['config'] ?? null);
+        $t['sections'] = $this->db->fetchAll(
+            "SELECT * FROM assessment_template_sections WHERE template_id=? ORDER BY sort_order, id", 'i', $id);
+        foreach ($t['sections'] as &$s) {
+            $s['difficulty_mix'] = Question::jsonb($s['difficulty_mix'] ?? null);
+            $s['config']         = Question::jsonb($s['config'] ?? null);
+        }
+        return $t;
+    }
+}
+
+/** Assessment instances = online_tests (the existing issuance/delivery table). */
+final class AssessmentRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?Assessment
+    {
+        $r = $this->db->fetchOne("SELECT * FROM online_tests WHERE id=?", 'i', $id);
+        return $r ? Assessment::fromRow($r) : null;
+    }
+
+    /** Persist a generated instance + its question set (existing tables only). */
+    public function createInstance(array $head, array $questionRows): int
+    {
+        $id = $this->db->execute(
+            "INSERT INTO online_tests
+               (title,description,candidate_id,created_by,duration_minutes,total_marks,
+                passing_marks,status,test_link_token,scheduled_date,expiry_date,template_id,config)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", 'ssiiiiissssis',
+            $head['title'], $head['description'] ?? '', $head['candidate_id'], $head['created_by'],
+            $head['duration_minutes'], $head['total_marks'], $head['passing_marks'],
+            $head['status'] ?? 'pending', $head['test_link_token'],
+            $head['scheduled_date'] ?? null, $head['expiry_date'] ?? null,
+            $head['template_id'] ?? null, $head['config'] ?? '{}');
+        if (!is_int($id)) return 0;
+        foreach ($questionRows as $q) {
+            $this->db->execute(
+                "INSERT INTO test_questions (test_id,question_id,marks,order_no,time_limit_secs,section_id)
+                 VALUES (?,?,?,?,?,?)", 'iiiiii',
+                $id, $q['question_id'], $q['marks'], $q['order_no'],
+                $q['time_limit_secs'] ?? 0, $q['section_id'] ?? null);
+        }
+        return $id;
+    }
+}
+
+final class SubmissionRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?Submission
+    {
+        $r = $this->db->fetchOne("SELECT * FROM test_submissions WHERE id=?", 'i', $id);
+        return $r ? Submission::fromRow($r) : null;
+    }
+
+    /** All answers for an attempt joined to their questions (ResultEngine input). */
+    public function answersWithQuestions(int $submissionId): array
+    {
+        return $this->db->fetchAll(
+            "SELECT ta.*, tq.marks AS weight, tq.section_id,
+                    iq.question_type, iq.category, iq.difficulty, iq.skills, iq.metadata, iq.max_score
+             FROM test_answers ta
+             JOIN test_submissions ts ON ts.id = ta.submission_id
+             JOIN test_questions tq   ON tq.test_id = ts.test_id AND tq.question_id = ta.question_id
+             JOIN interview_questions iq ON iq.id = ta.question_id
+             WHERE ta.submission_id=? ORDER BY tq.order_no", 'i', $submissionId);
+    }
+
+    /** Prior submitted attempts for trend analysis (oldest first). */
+    public function candidateHistory(int $candidateId): array
+    {
+        return $this->db->fetchAll(
+            "SELECT id, percentage, submitted_at FROM test_submissions
+             WHERE candidate_id=? AND status IN ('submitted','auto_submitted')
+             ORDER BY submitted_at ASC", 'i', $candidateId);
+    }
+}
+
+/** Persistent event outbox writer for the EventBus. */
+final class OutboxRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function append(string $event, array $payload): void
+    {
+        $this->db->execute(
+            "INSERT INTO assessment_events (event_name, entity, entity_id, payload) VALUES (?,?,?,?)", 'ssis',
+            $event, $payload['entity'] ?? null,
+            isset($payload['entity_id']) ? (int)$payload['entity_id'] : null,
+            json_encode($payload, JSON_UNESCAPED_SLASHES));
+    }
+}
+
+/**
+ * Generic plugin registry. Rows in assessment_plugins declare WHAT exists
+ * (code, kind, config, enabled); runtime bind() attaches HOW (the adapter
+ * object implementing the relevant interface). Future HackerRank / Codility /
+ * TestGorilla / Bedrock / OpenAI / Claude / GitHub integrations are a row +
+ * an adapter class — the engine core never changes.
+ */
+final class PluginRegistry
+{
+    public const KINDS = ['question_source', 'delivery', 'ai_scorer', 'exporter', 'webhook'];
+
+    /** @var array<string,object> code => adapter instance */
+    private array $adapters = [];
+
+    public function __construct(private readonly ?DbAdapter $db = null) {}
+
+    public function bind(string $code, object $adapter): void { $this->adapters[$code] = $adapter; }
+    public function adapter(string $code): ?object { return $this->adapters[$code] ?? null; }
+
+    /** Enabled plugin rows, optionally filtered by kind. */
+    public function enabled(?string $kind = null): array
+    {
+        if (!$this->db) return [];
+        $rows = $kind !== null
+            ? $this->db->fetchAll("SELECT * FROM assessment_plugins WHERE enabled=1 AND kind=? ORDER BY code", 's', $kind)
+            : $this->db->fetchAll("SELECT * FROM assessment_plugins WHERE enabled=1 ORDER BY code");
+        foreach ($rows as &$r) $r['config'] = Question::jsonb($r['config'] ?? null);
+        return $rows;
+    }
+
+    public function register(string $code, string $name, string $kind, array $config = [], bool $enabled = false): bool
+    {
+        if (!in_array($kind, self::KINDS, true)) return false;
+        if (!$this->db) return false;
+        return (bool)$this->db->execute(
+            "INSERT INTO assessment_plugins (code,name,kind,config,enabled) VALUES (?,?,?,?,?)
+             ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, kind=EXCLUDED.kind,
+               config=EXCLUDED.config, enabled=EXCLUDED.enabled", 'ssssi',
+            $code, $name, $kind, json_encode($config, JSON_UNESCAPED_SLASHES), $enabled ? 1 : 0);
+    }
+}

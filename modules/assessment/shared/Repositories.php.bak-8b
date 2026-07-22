@@ -1,0 +1,645 @@
+<?php
+// ═════════════════════════════════════════════════════════════════════════════
+//  Repository layer (Module 8A) — the ONLY place assessment SQL lives.
+//  Repositories wrap the EXISTING tables (no parallel banks, no duplicate
+//  submission system) behind a DbAdapter so engines stay pure and tests can
+//  inject an in-memory fake. GlobalDb delegates to the frozen platform
+//  helpers (dbFetchAll/dbFetchOne/dbExecute) in includes/config.php.
+// ═════════════════════════════════════════════════════════════════════════════
+declare(strict_types=1);
+
+namespace SmartHire\Assessment\Shared;
+
+use SmartHire\Assessment\Domain\Question;
+use SmartHire\Assessment\Domain\QuestionPool;
+use SmartHire\Assessment\Domain\Assessment;
+use SmartHire\Assessment\Domain\Submission;
+
+interface DbAdapter
+{
+    public function fetchAll(string $sql, string $types = '', mixed ...$params): array;
+    public function fetchOne(string $sql, string $types = '', mixed ...$params): ?array;
+    /** @return bool|int insert id when available, else bool */
+    public function execute(string $sql, string $types = '', mixed ...$params): bool|int;
+}
+
+/** Production adapter — delegates to the frozen global DB helpers. */
+final class GlobalDb implements DbAdapter
+{
+    public function fetchAll(string $sql, string $types = '', mixed ...$params): array
+    { return \dbFetchAll($sql, $types, ...$params); }
+    public function fetchOne(string $sql, string $types = '', mixed ...$params): ?array
+    { return \dbFetchOne($sql, $types, ...$params); }
+    public function execute(string $sql, string $types = '', mixed ...$params): bool|int
+    { return \dbExecute($sql, $types, ...$params); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+final class QuestionRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?Question
+    {
+        $r = $this->findRow($id);
+        return $r ? Question::fromRow($r) : null;
+    }
+
+    /** Raw bank row (editor forms need the untyped columns). */
+    public function findRow(int $id): ?array
+    {
+        return $this->db->fetchOne("SELECT * FROM interview_questions WHERE id=?", 'i', $id);
+    }
+
+    /** @param int[] $ids @return array<int,Question> keyed by id, input order preserved */
+    public function findMany(array $ids): array
+    {
+        if (!$ids) return [];
+        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        $rows = $this->db->fetchAll("SELECT * FROM interview_questions WHERE id IN ($ph)",
+                                    str_repeat('i', count($ids)), ...array_map('intval', $ids));
+        $byId = [];
+        foreach ($rows as $r) $byId[(int)$r['id']] = Question::fromRow($r);
+        $out = [];
+        foreach ($ids as $id) if (isset($byId[(int)$id])) $out[(int)$id] = $byId[(int)$id];
+        return $out;
+    }
+
+    /** Active questions of a pool grouped by difficulty (Generator input). */
+    public function poolByDifficulty(int $poolId): array
+    {
+        $rows = $this->db->fetchAll(
+            "SELECT iq.id, iq.difficulty FROM question_preset_items pi
+             JOIN interview_questions iq ON iq.id = pi.question_id
+             WHERE pi.preset_id=? AND COALESCE(iq.status,'active')='active'", 'i', $poolId);
+        $out = ['easy' => [], 'medium' => [], 'hard' => []];
+        foreach ($rows as $r) $out[$r['difficulty'] ?? 'medium'][] = (int)$r['id'];
+        return $out;
+    }
+
+    // ── 8B admin workspace (additive) ────────────────────────────────────────
+
+    public const SORTS = ['newest' => 'iq.id DESC', 'oldest' => 'iq.id ASC',
+                          'difficulty' => "CASE iq.difficulty WHEN 'easy' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, iq.id DESC",
+                          'type' => 'iq.question_type, iq.id DESC'];
+
+    /** Filtered, server-side-paginated bank listing. @return array{rows:array,total:int} */
+    public function search(array $f, int $page = 1, int $per = 15): array
+    {
+        $where = ["COALESCE(iq.status,'active') <> 'deleted'"]; $types = ''; $params = [];
+        if (($f['q'] ?? '') !== '')          { $where[] = "(iq.question LIKE ? OR COALESCE(iq.skills,'') LIKE ? OR COALESCE(iq.position_tag,'') LIKE ?)"; $types .= 'sss'; $needle = '%' . $f['q'] . '%'; array_push($params, $needle, $needle, $needle); }
+        if (($f['type'] ?? '') !== '')       { $where[] = 'iq.question_type = ?';           $types .= 's'; $params[] = $f['type']; }
+        if (($f['difficulty'] ?? '') !== '') { $where[] = 'iq.difficulty = ?';              $types .= 's'; $params[] = $f['difficulty']; }
+        if (($f['status'] ?? '') !== '')     { $where[] = "COALESCE(iq.status,'active') = ?"; $types .= 's'; $params[] = $f['status']; }
+        if ((int)($f['pool_id'] ?? 0) > 0)   { $where[] = 'iq.id IN (SELECT question_id FROM question_preset_items WHERE preset_id = ?)'; $types .= 'i'; $params[] = (int)$f['pool_id']; }
+        $w = implode(' AND ', $where);
+        $order = self::SORTS[$f['sort'] ?? 'newest'] ?? self::SORTS['newest'];
+        $total = (int)($this->db->fetchOne("SELECT COUNT(*) n FROM interview_questions iq WHERE $w", $types, ...$params)['n'] ?? 0);
+        $rows  = $this->db->fetchAll(
+            "SELECT iq.* FROM interview_questions iq WHERE $w ORDER BY $order LIMIT " . (int)$per . " OFFSET " . (int)(($page - 1) * $per),
+            $types, ...$params);
+        return ['rows' => $rows, 'total' => $total];
+    }
+
+    /** @return array<int,array{tests:int,interviews:int}> usage per question id */
+    public function usageCounts(array $ids): array
+    {
+        if (!$ids) return [];
+        $ph = implode(',', array_fill(0, count($ids), '?')); $t = str_repeat('i', count($ids));
+        $out = array_fill_keys(array_map('intval', $ids), ['tests' => 0, 'interviews' => 0]);
+        foreach ($this->db->fetchAll("SELECT question_id, COUNT(*) n FROM test_questions WHERE question_id IN ($ph) GROUP BY question_id", $t, ...$ids) as $r)
+            $out[(int)$r['question_id']]['tests'] = (int)$r['n'];
+        foreach ($this->db->fetchAll("SELECT question_id, COUNT(*) n FROM candidate_responses WHERE question_id IN ($ph) GROUP BY question_id", $t, ...$ids) as $r)
+            $out[(int)$r['question_id']]['interviews'] = (int)$r['n'];
+        return $out;
+    }
+
+    /** @return array<int,string[]> pool names per question id */
+    public function poolNamesFor(array $ids): array
+    {
+        if (!$ids) return [];
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $out = [];
+        foreach ($this->db->fetchAll(
+            "SELECT pi.question_id, qp.name FROM question_preset_items pi JOIN question_presets qp ON qp.id = pi.preset_id
+             WHERE pi.question_id IN ($ph) ORDER BY qp.name", str_repeat('i', count($ids)), ...$ids) as $r)
+            $out[(int)$r['question_id']][] = (string)$r['name'];
+        return $out;
+    }
+
+    /** Insert or update a bank question. @return int id */
+    public function save(array $d, ?int $id = null): int
+    {
+        $fields = [$d['question'], $d['question_type'], $d['category'], $d['difficulty'], $d['position_tag'],
+                   $d['max_score'], $d['expected_answer'], $d['option_a'], $d['option_b'], $d['option_c'], $d['option_d'],
+                   $d['correct_option'], $d['metadata'], $d['answer_key'], $d['skills'], $d['status']];
+        if ($id) {
+            $this->db->execute(
+                "UPDATE interview_questions SET question=?, question_type=?, category=?, difficulty=?, position_tag=?,
+                   max_score=?, expected_answer=?, option_a=?, option_b=?, option_c=?, option_d=?, correct_option=?,
+                   metadata=?, answer_key=?, skills=?, status=?, updated_at=NOW() WHERE id=?",
+                'sssssissssssssssi', ...[...$fields, $id]);
+            return $id;
+        }
+        $new = $this->db->execute(
+            "INSERT INTO interview_questions (question, question_type, category, difficulty, position_tag, max_score,
+               expected_answer, option_a, option_b, option_c, option_d, correct_option, metadata, answer_key, skills, status)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", 'sssssissssssssss', ...$fields);
+        return is_int($new) ? $new : 0;
+    }
+
+    public function setStatus(int $id, string $status): bool
+    {
+        return (bool)$this->db->execute("UPDATE interview_questions SET status=?, updated_at=NOW() WHERE id=?", 'si', $status, $id);
+    }
+
+    /** Copy a question (status draft). @return int new id */
+    public function duplicate(int $id): int
+    {
+        $new = $this->db->execute(
+            "INSERT INTO interview_questions (question, question_type, category, difficulty, position_tag, max_score,
+               expected_answer, option_a, option_b, option_c, option_d, correct_option, metadata, answer_key, skills, status)
+             SELECT question || ' (copy)', question_type, category, difficulty, position_tag, max_score,
+               expected_answer, option_a, option_b, option_c, option_d, correct_option, metadata, answer_key, skills, 'draft'
+             FROM interview_questions WHERE id=?", 'i', $id);
+        return is_int($new) ? $new : 0;
+    }
+
+    /** Difficulty distribution of the whole active bank (dashboard chart). */
+    public function difficultyDistribution(): array
+    {
+        $out = ['easy' => 0, 'medium' => 0, 'hard' => 0];
+        foreach ($this->db->fetchAll("SELECT difficulty, COUNT(*) n FROM interview_questions WHERE COALESCE(status,'active')='active' GROUP BY difficulty") as $r)
+            $out[$r['difficulty']] = (int)$r['n'];
+        return $out;
+    }
+}
+
+final class PoolRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?QuestionPool
+    {
+        $r = $this->db->fetchOne("SELECT * FROM question_presets WHERE id=?", 'i', $id);
+        if (!$r) return null;
+        $ids = array_column($this->db->fetchAll(
+            "SELECT question_id FROM question_preset_items WHERE preset_id=?", 'i', $id), 'question_id');
+        return QuestionPool::fromRow($r, $ids);
+    }
+
+    // ── 8B admin workspace (additive) ────────────────────────────────────────
+
+    /** Pools with question counts + difficulty breakdown. */
+    public function listWithStats(bool $includeArchived = false): array
+    {
+        $w = $includeArchived ? '1=1' : "COALESCE(qp.status,'active') = 'active'";
+        $pools = $this->db->fetchAll("SELECT qp.* FROM question_presets qp WHERE $w ORDER BY qp.name");
+        if (!$pools) return [];
+        $stats = [];
+        foreach ($this->db->fetchAll(
+            "SELECT pi.preset_id, iq.difficulty, COUNT(*) n FROM question_preset_items pi
+             JOIN interview_questions iq ON iq.id = pi.question_id
+             WHERE COALESCE(iq.status,'active')='active' GROUP BY pi.preset_id, iq.difficulty") as $r)
+            $stats[(int)$r['preset_id']][$r['difficulty']] = (int)$r['n'];
+        foreach ($pools as &$p) {
+            $d = $stats[(int)$p['id']] ?? [];
+            $p['breakdown'] = ['easy' => $d['easy'] ?? 0, 'medium' => $d['medium'] ?? 0, 'hard' => $d['hard'] ?? 0];
+            $p['question_count'] = array_sum($p['breakdown']);
+        }
+        return $pools;
+    }
+
+    /** Skills present in a pool with counts. */
+    public function skillBreakdown(int $poolId): array
+    {
+        $out = [];
+        foreach ($this->db->fetchAll(
+            "SELECT COALESCE(iq.skills,'') s FROM question_preset_items pi
+             JOIN interview_questions iq ON iq.id = pi.question_id WHERE pi.preset_id=?", 'i', $poolId) as $r)
+            foreach (array_filter(array_map('trim', explode(',', $r['s']))) as $skill)
+                $out[$skill] = ($out[$skill] ?? 0) + 1;
+        arsort($out);
+        return $out;
+    }
+
+    /** Templates whose sections reference this pool (dependency view). */
+    public function usedByTemplates(int $poolId): array
+    {
+        return $this->db->fetchAll(
+            "SELECT DISTINCT at.id, at.name, at.status FROM assessment_template_sections ats
+             JOIN assessment_templates at ON at.id = ats.template_id WHERE ats.pool_id=? ORDER BY at.name", 'i', $poolId);
+    }
+
+    public function create(string $name, string $description = '', string $tags = ''): int
+    {
+        $id = $this->db->execute("INSERT INTO question_presets (name, description, tags, status) VALUES (?,?,?,'active')", 'sss', $name, $description, $tags);
+        return is_int($id) ? $id : 0;
+    }
+
+    public function setStatus(int $id, string $status): bool
+    { return (bool)$this->db->execute("UPDATE question_presets SET status=? WHERE id=?", 'si', $status, $id); }
+
+    public function addQuestions(int $poolId, array $questionIds): int
+    {
+        $n = 0;
+        foreach (array_unique(array_map('intval', $questionIds)) as $qid) {
+            $this->db->execute("INSERT INTO question_preset_items (preset_id, question_id) VALUES (?,?) ON CONFLICT DO NOTHING", 'ii', $poolId, $qid);
+            $n++;
+        }
+        return $n;
+    }
+
+    public function removeQuestion(int $poolId, int $questionId): bool
+    { return (bool)$this->db->execute("DELETE FROM question_preset_items WHERE preset_id=? AND question_id=?", 'ii', $poolId, $questionId); }
+
+    /** Clone a pool with all its questions. @return int new id */
+    public function clonePool(int $id, string $newName): int
+    {
+        $src = $this->db->fetchOne("SELECT * FROM question_presets WHERE id=?", 'i', $id);
+        if (!$src) return 0;
+        $new = $this->create($newName, (string)($src['description'] ?? ''), (string)($src['tags'] ?? ''));
+        if ($new) $this->db->execute("INSERT INTO question_preset_items (preset_id, question_id)
+                                      SELECT ?, question_id FROM question_preset_items WHERE preset_id=?", 'ii', $new, $id);
+        return $new;
+    }
+
+    /** Merge source pool's questions into target, then archive source. */
+    public function merge(int $sourceId, int $targetId): bool
+    {
+        if ($sourceId === $targetId) return false;
+        $this->db->execute("INSERT INTO question_preset_items (preset_id, question_id)
+                            SELECT ?, question_id FROM question_preset_items WHERE preset_id=? ON CONFLICT DO NOTHING", 'ii', $targetId, $sourceId);
+        return $this->setStatus($sourceId, 'archived');
+    }
+}
+
+final class TemplateRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?array
+    {
+        $t = $this->db->fetchOne("SELECT * FROM assessment_templates WHERE id=?", 'i', $id);
+        if (!$t) return null;
+        $t['config'] = Question::jsonb($t['config'] ?? null);
+        $t['sections'] = $this->db->fetchAll(
+            "SELECT * FROM assessment_template_sections WHERE template_id=? ORDER BY sort_order, id", 'i', $id);
+        foreach ($t['sections'] as &$s) {
+            $s['difficulty_mix'] = Question::jsonb($s['difficulty_mix'] ?? null);
+            $s['config']         = Question::jsonb($s['config'] ?? null);
+        }
+        return $t;
+    }
+
+    // ── 8B admin workspace (additive) ────────────────────────────────────────
+
+    /** Templates with section/issue counts. */
+    public function listWithStats(array $f = []): array
+    {
+        $where = ["at.status <> 'deleted'"]; $types = ''; $params = [];
+        if (($f['q'] ?? '') !== '')      { $where[] = '(at.name LIKE ? OR COALESCE(at.role,\'\') LIKE ?)'; $types .= 'ss'; $n = '%' . $f['q'] . '%'; array_push($params, $n, $n); }
+        if (($f['status'] ?? '') !== '') { $where[] = 'at.status = ?'; $types .= 's'; $params[] = $f['status']; }
+        $w = implode(' AND ', $where);
+        $rows = $this->db->fetchAll(
+            "SELECT at.*,
+               (SELECT COUNT(*) FROM assessment_template_sections s WHERE s.template_id = at.id) AS section_count,
+               (SELECT COALESCE(SUM(s.question_count),0) FROM assessment_template_sections s WHERE s.template_id = at.id) AS question_count,
+               (SELECT COUNT(*) FROM online_tests ot WHERE ot.template_id = at.id) AS issued_count
+             FROM assessment_templates at WHERE $w ORDER BY at.id DESC", $types, ...$params);
+        foreach ($rows as &$r) $r['config'] = \SmartHire\Assessment\Domain\Question::jsonb($r['config'] ?? null);
+        return $rows;
+    }
+
+    /** Create/update template head + replace its section set. @return int template id */
+    public function save(array $head, array $sections, ?int $id = null): int
+    {
+        $f = [$head['name'], $head['category'], $head['department'], $head['role'], $head['experience_level'],
+              (int)$head['duration_minutes'], (int)$head['passing_score'], (int)$head['max_attempts'],
+              $head['instructions'], (int)$head['certification'], $head['expiry_days'] !== null ? (int)$head['expiry_days'] : null,
+              $head['config'], $head['status']];
+        if ($id) {
+            $this->db->execute(
+                "UPDATE assessment_templates SET name=?, category=?, department=?, role=?, experience_level=?,
+                   duration_minutes=?, passing_score=?, max_attempts=?, instructions=?, certification=?,
+                   expiry_days=?, config=?, status=?, updated_at=NOW() WHERE id=?", 'sssssiiisiissi', ...[...$f, $id]);
+            $this->db->execute("DELETE FROM assessment_template_sections WHERE template_id=?", 'i', $id);
+        } else {
+            $new = $this->db->execute(
+                "INSERT INTO assessment_templates (name, category, department, role, experience_level, duration_minutes,
+                   passing_score, max_attempts, instructions, certification, expiry_days, config, status, created_by)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", 'sssssiiisiissi', ...[...$f, (int)($head['created_by'] ?? 0) ?: null]);
+            if (!is_int($new)) return 0;
+            $id = $new;
+        }
+        $sort = 1;
+        foreach ($sections as $s) {
+            $this->db->execute(
+                "INSERT INTO assessment_template_sections (template_id, name, pool_id, question_count, time_minutes, weight, difficulty_mix, config, sort_order)
+                 VALUES (?,?,?,?,?,?,?,?,?)", 'isiiidssi',
+                $id, $s['name'], $s['pool_id'] ?: null, (int)$s['question_count'],
+                $s['time_minutes'] !== null && $s['time_minutes'] !== '' ? (int)$s['time_minutes'] : null,
+                (float)($s['weight'] ?? 1), $s['difficulty_mix'] ?? '{}', $s['config'] ?? '{}', $sort++);
+        }
+        return $id;
+    }
+
+    public function setStatus(int $id, string $status): bool
+    { return (bool)$this->db->execute("UPDATE assessment_templates SET status=?, updated_at=NOW() WHERE id=?", 'si', $status, $id); }
+
+    /** Clone template + sections as a draft. @return int new id */
+    public function cloneTemplate(int $id, string $newName): int
+    {
+        $t = $this->find($id);
+        if (!$t) return 0;
+        $head = $t;
+        $head['name'] = $newName; $head['status'] = 'draft';
+        $head['config'] = json_encode($t['config'], JSON_UNESCAPED_SLASHES);
+        $head['expiry_days'] = $t['expiry_days'] !== null ? (int)$t['expiry_days'] : null;
+        $sections = array_map(fn($s) => [
+            'name' => $s['name'], 'pool_id' => $s['pool_id'], 'question_count' => $s['question_count'],
+            'time_minutes' => $s['time_minutes'], 'weight' => $s['weight'],
+            'difficulty_mix' => json_encode($s['difficulty_mix'], JSON_UNESCAPED_SLASHES),
+            'config' => json_encode($s['config'], JSON_UNESCAPED_SLASHES)], $t['sections']);
+        return $this->save($head, $sections, null);
+    }
+}
+
+/** Assessment instances = online_tests (the existing issuance/delivery table). */
+final class AssessmentRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?Assessment
+    {
+        $r = $this->db->fetchOne("SELECT * FROM online_tests WHERE id=?", 'i', $id);
+        return $r ? Assessment::fromRow($r) : null;
+    }
+
+    /** Persist a generated instance + its question set (existing tables only). */
+    public function createInstance(array $head, array $questionRows): int
+    {
+        $id = $this->db->execute(
+            "INSERT INTO online_tests
+               (title,description,candidate_id,created_by,duration_minutes,total_marks,
+                passing_marks,status,test_link_token,scheduled_date,expiry_date,template_id,config)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", 'ssiiiiissssis',
+            $head['title'], $head['description'] ?? '', $head['candidate_id'], $head['created_by'],
+            $head['duration_minutes'], $head['total_marks'], $head['passing_marks'],
+            $head['status'] ?? 'pending', $head['test_link_token'],
+            $head['scheduled_date'] ?? null, $head['expiry_date'] ?? null,
+            $head['template_id'] ?? null, $head['config'] ?? '{}');
+        if (!is_int($id)) return 0;
+        foreach ($questionRows as $q) {
+            $this->db->execute(
+                "INSERT INTO test_questions (test_id,question_id,marks,order_no,time_limit_secs,section_id)
+                 VALUES (?,?,?,?,?,?)", 'iiiiii',
+                $id, $q['question_id'], $q['marks'], $q['order_no'],
+                $q['time_limit_secs'] ?? 0, $q['section_id'] ?? null);
+        }
+        return $id;
+    }
+}
+
+final class SubmissionRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function find(int $id): ?Submission
+    {
+        $r = $this->db->fetchOne("SELECT * FROM test_submissions WHERE id=?", 'i', $id);
+        return $r ? Submission::fromRow($r) : null;
+    }
+
+    /** All answers for an attempt joined to their questions (ResultEngine input). */
+    public function answersWithQuestions(int $submissionId): array
+    {
+        return $this->db->fetchAll(
+            "SELECT ta.*, tq.marks AS weight, tq.section_id,
+                    iq.question_type, iq.category, iq.difficulty, iq.skills, iq.metadata, iq.max_score
+             FROM test_answers ta
+             JOIN test_submissions ts ON ts.id = ta.submission_id
+             JOIN test_questions tq   ON tq.test_id = ts.test_id AND tq.question_id = ta.question_id
+             JOIN interview_questions iq ON iq.id = ta.question_id
+             WHERE ta.submission_id=? ORDER BY tq.order_no", 'i', $submissionId);
+    }
+
+    /** Prior submitted attempts for trend analysis (oldest first). */
+    public function candidateHistory(int $candidateId): array
+    {
+        return $this->db->fetchAll(
+            "SELECT id, percentage, submitted_at FROM test_submissions
+             WHERE candidate_id=? AND status IN ('submitted','auto_submitted')
+             ORDER BY submitted_at ASC", 'i', $candidateId);
+    }
+
+    // ── 8B review queue + results workspace (additive) ───────────────────────
+
+    /** Submissions that still have unreviewed manual-lane answers. */
+    public function pendingReviews(int $limit = 50): array
+    {
+        return $this->db->fetchAll(
+            "SELECT ts.id, ts.test_id, ts.candidate_id, ts.submitted_at, ts.percentage, ts.status,
+                    ot.title, c.name AS candidate_name,
+                    COUNT(*) FILTER (WHERE ta.hr_marks IS NULL AND iq.question_type NOT IN ('mcq','multi_select','true_false','fill_blank','output_prediction')) AS pending_count
+             FROM test_submissions ts
+             JOIN online_tests ot ON ot.id = ts.test_id
+             JOIN candidates c    ON c.id = ts.candidate_id
+             JOIN test_answers ta ON ta.submission_id = ts.id
+             JOIN interview_questions iq ON iq.id = ta.question_id
+             WHERE ts.status IN ('submitted','auto_submitted')
+             GROUP BY ts.id, ts.test_id, ts.candidate_id, ts.submitted_at, ts.percentage, ts.status, ot.title, c.name
+             HAVING COUNT(*) FILTER (WHERE ta.hr_marks IS NULL AND iq.question_type NOT IN ('mcq','multi_select','true_false','fill_blank','output_prediction')) > 0
+             ORDER BY ts.submitted_at ASC LIMIT " . (int)$limit);
+    }
+
+    public function saveManualScore(int $answerId, int $submissionId, int $marks, string $feedback, int $reviewerId): bool
+    {
+        return (bool)$this->db->execute(
+            "UPDATE test_answers SET hr_marks=?, hr_feedback=?, hr_marked_at=NOW(), hr_marked_by=? WHERE id=? AND submission_id=?",
+            'isiii', $marks, $feedback, $reviewerId, $answerId, $submissionId);
+    }
+
+    public function updateTotals(int $submissionId, float $total, float $pct): bool
+    {
+        return (bool)$this->db->execute(
+            "UPDATE test_submissions SET total_score=?, percentage=? WHERE id=?", 'idi', (int)round($total), $pct, $submissionId);
+    }
+
+    /** Submitted attempts list for the results workspace. */
+    public function listSubmitted(array $f = [], int $limit = 100): array
+    {
+        $where = ["ts.status IN ('submitted','auto_submitted')"]; $types = ''; $params = [];
+        if (($f['q'] ?? '') !== '') { $where[] = '(c.name LIKE ? OR ot.title LIKE ?)'; $types .= 'ss'; $n = '%' . $f['q'] . '%'; array_push($params, $n, $n); }
+        $w = implode(' AND ', $where);
+        return $this->db->fetchAll(
+            "SELECT ts.*, ot.title, ot.passing_marks, ot.total_marks AS test_total, ot.template_id, ot.config AS instance_config,
+                    c.name AS candidate_name
+             FROM test_submissions ts
+             JOIN online_tests ot ON ot.id = ts.test_id
+             JOIN candidates c ON c.id = ts.candidate_id
+             WHERE $w ORDER BY ts.submitted_at DESC LIMIT " . (int)$limit, $types, ...$params);
+    }
+}
+
+/** Persistent event outbox writer for the EventBus. */
+final class OutboxRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    public function append(string $event, array $payload): void
+    {
+        $this->db->execute(
+            "INSERT INTO assessment_events (event_name, entity, entity_id, payload) VALUES (?,?,?,?)", 'ssis',
+            $event, $payload['entity'] ?? null,
+            isset($payload['entity_id']) ? (int)$payload['entity_id'] : null,
+            json_encode($payload, JSON_UNESCAPED_SLASHES));
+    }
+}
+
+/**
+ * Generic plugin registry. Rows in assessment_plugins declare WHAT exists
+ * (code, kind, config, enabled); runtime bind() attaches HOW (the adapter
+ * object implementing the relevant interface). Future HackerRank / Codility /
+ * TestGorilla / Bedrock / OpenAI / Claude / GitHub integrations are a row +
+ * an adapter class — the engine core never changes.
+ */
+final class PluginRegistry
+{
+    public const KINDS = ['question_source', 'delivery', 'ai_scorer', 'exporter', 'webhook'];
+
+    /** @var array<string,object> code => adapter instance */
+    private array $adapters = [];
+
+    public function __construct(private readonly ?DbAdapter $db = null) {}
+
+    public function bind(string $code, object $adapter): void { $this->adapters[$code] = $adapter; }
+    public function adapter(string $code): ?object { return $this->adapters[$code] ?? null; }
+
+    /** Enabled plugin rows, optionally filtered by kind. */
+    public function enabled(?string $kind = null): array
+    {
+        if (!$this->db) return [];
+        $rows = $kind !== null
+            ? $this->db->fetchAll("SELECT * FROM assessment_plugins WHERE enabled=1 AND kind=? ORDER BY code", 's', $kind)
+            : $this->db->fetchAll("SELECT * FROM assessment_plugins WHERE enabled=1 ORDER BY code");
+        foreach ($rows as &$r) $r['config'] = Question::jsonb($r['config'] ?? null);
+        return $rows;
+    }
+
+    public function register(string $code, string $name, string $kind, array $config = [], bool $enabled = false): bool
+    {
+        if (!in_array($kind, self::KINDS, true)) return false;
+        if (!$this->db) return false;
+        return (bool)$this->db->execute(
+            "INSERT INTO assessment_plugins (code,name,kind,config,enabled) VALUES (?,?,?,?,?)
+             ON CONFLICT (code) DO UPDATE SET name=EXCLUDED.name, kind=EXCLUDED.kind,
+               config=EXCLUDED.config, enabled=EXCLUDED.enabled", 'ssssi',
+            $code, $name, $kind, json_encode($config, JSON_UNESCAPED_SLASHES), $enabled ? 1 : 0);
+    }
+}
+
+/** 8B: dashboard aggregates + global search. Read-only; consumed via AssessmentService. */
+final class AdminStatsRepository
+{
+    public function __construct(private readonly DbAdapter $db) {}
+
+    private const AUTO = "('mcq','multi_select','true_false','fill_blank','output_prediction')";
+
+    public function overview(): array
+    {
+        $one = fn(string $sql) => (int)($this->db->fetchOne($sql)['n'] ?? 0);
+        $pending = count((new SubmissionRepository($this->db))->pendingReviews(500));
+        $avg = $this->db->fetchOne(
+            "SELECT ROUND(AVG(percentage),1) a,
+                    ROUND(100.0 * COUNT(*) FILTER (WHERE total_score >= (SELECT passing_marks FROM online_tests WHERE id=test_id)) / NULLIF(COUNT(*),0), 1) p
+             FROM test_submissions WHERE status IN ('submitted','auto_submitted')");
+        return [
+            'active_assessments'  => $one("SELECT COUNT(*) n FROM online_tests WHERE status IN ('pending','active')"),
+            'draft_templates'     => $one("SELECT COUNT(*) n FROM assessment_templates WHERE status='draft'"),
+            'published_templates' => $one("SELECT COUNT(*) n FROM assessment_templates WHERE status='active'"),
+            'pools'               => $one("SELECT COUNT(*) n FROM question_presets WHERE COALESCE(status,'active')='active'"),
+            'questions'           => $one("SELECT COUNT(*) n FROM interview_questions WHERE COALESCE(status,'active')='active'"),
+            'in_progress'         => $one("SELECT COUNT(*) n FROM test_submissions WHERE status='in_progress'"),
+            'pending_reviews'     => $pending,
+            'completed_today'     => $one("SELECT COUNT(*) n FROM test_submissions WHERE status IN ('submitted','auto_submitted') AND submitted_at::date = CURRENT_DATE"),
+            'avg_score'           => (float)($avg['a'] ?? 0),
+            'pass_rate'           => (float)($avg['p'] ?? 0),
+        ];
+    }
+
+    /** Submissions per day, last N days (activity chart). */
+    public function activityByDay(int $days = 14): array
+    {
+        $rows = $this->db->fetchAll(
+            "SELECT submitted_at::date d, COUNT(*) n FROM test_submissions
+             WHERE status IN ('submitted','auto_submitted') AND submitted_at >= CURRENT_DATE - INTERVAL '" . (int)$days . " days'
+             GROUP BY submitted_at::date ORDER BY d");
+        $by = array_column($rows, 'n', 'd');
+        $out = [];
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $d = date('Y-m-d', strtotime("-$i days"));
+            $out[$d] = (int)($by[$d] ?? 0);
+        }
+        return $out;
+    }
+
+    public function passFail(): array
+    {
+        $r = $this->db->fetchOne(
+            "SELECT COUNT(*) FILTER (WHERE ts.total_score >= ot.passing_marks) pass,
+                    COUNT(*) FILTER (WHERE ts.total_score <  ot.passing_marks) fail
+             FROM test_submissions ts JOIN online_tests ot ON ot.id = ts.test_id
+             WHERE ts.status IN ('submitted','auto_submitted')");
+        return ['pass' => (int)($r['pass'] ?? 0), 'fail' => (int)($r['fail'] ?? 0)];
+    }
+
+    public function candidateProgress(): array
+    {
+        $r = $this->db->fetchOne(
+            "SELECT COUNT(*) FILTER (WHERE status='in_progress') ip,
+                    COUNT(*) FILTER (WHERE status IN ('submitted','auto_submitted')) done
+             FROM test_submissions");
+        return ['in_progress' => (int)($r['ip'] ?? 0), 'completed' => (int)($r['done'] ?? 0)];
+    }
+
+    public function topTemplates(int $limit = 5): array
+    {
+        return $this->db->fetchAll(
+            "SELECT at.name, COUNT(ot.id) n FROM assessment_templates at
+             JOIN online_tests ot ON ot.template_id = at.id
+             GROUP BY at.id, at.name ORDER BY n DESC, at.name LIMIT " . (int)$limit);
+    }
+
+    public function topPools(int $limit = 5): array
+    {
+        return $this->db->fetchAll(
+            "SELECT qp.name, COUNT(ats.id) n FROM question_presets qp
+             JOIN assessment_template_sections ats ON ats.pool_id = qp.id
+             GROUP BY qp.id, qp.name ORDER BY n DESC, qp.name LIMIT " . (int)$limit);
+    }
+
+    /** Candidate picker options for the generator (read-only; keeps SQL out of pages). */
+    public function candidateOptions(): array
+    {
+        return $this->db->fetchAll("SELECT id, name, position FROM candidates ORDER BY name");
+    }
+
+    /** Global assessment search (Ctrl+K). @return array<string,array> grouped hits */
+    public function globalSearch(string $q, int $perGroup = 5): array
+    {
+        $n = '%' . $q . '%';
+        $lim = (int)$perGroup;
+        return [
+            'questions' => $this->db->fetchAll("SELECT id, question AS label, question_type AS meta FROM interview_questions WHERE question LIKE ? AND COALESCE(status,'active') <> 'deleted' ORDER BY id DESC LIMIT $lim", 's', $n),
+            'pools'     => $this->db->fetchAll("SELECT id, name AS label, COALESCE(tags,'') AS meta FROM question_presets WHERE name LIKE ? LIMIT $lim", 's', $n),
+            'templates' => $this->db->fetchAll("SELECT id, name AS label, status AS meta FROM assessment_templates WHERE name LIKE ? LIMIT $lim", 's', $n),
+            'assessments' => $this->db->fetchAll("SELECT id, title AS label, status AS meta FROM online_tests WHERE title LIKE ? ORDER BY id DESC LIMIT $lim", 's', $n),
+            'candidates' => $this->db->fetchAll("SELECT id, name AS label, position AS meta FROM candidates WHERE name LIKE ? LIMIT $lim", 's', $n),
+            'results'   => $this->db->fetchAll("SELECT ts.id, c.name || ' — ' || ot.title AS label, ts.percentage || '%' AS meta
+                                                FROM test_submissions ts JOIN candidates c ON c.id=ts.candidate_id JOIN online_tests ot ON ot.id=ts.test_id
+                                                WHERE ts.status IN ('submitted','auto_submitted') AND (c.name LIKE ? OR ot.title LIKE ?) ORDER BY ts.id DESC LIMIT $lim", 'ss', $n, $n),
+        ];
+    }
+}

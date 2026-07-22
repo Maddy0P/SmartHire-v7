@@ -1,0 +1,10 @@
+/* SmartHire motion — Bible P22 catalog only */
+@keyframes sh-shimmer{from{background-position:130% 0}to{background-position:-30% 0}}
+@keyframes sh-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes sh-slide-in-right{from{transform:translateX(24px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes sh-slide-up{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+.sh-skeleton{background:linear-gradient(100deg,var(--sh-surface-2) 40%,var(--sh-border) 50%,var(--sh-surface-2) 60%);background-size:200% 100%;animation:sh-shimmer 1.5s linear infinite;border-radius:var(--sh-radius-sm);color:transparent!important;pointer-events:none;user-select:none}
+.sh-fade-in{animation:sh-fade-in var(--sh-dur) var(--sh-ease)}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important;scroll-behavior:auto!important}
+}

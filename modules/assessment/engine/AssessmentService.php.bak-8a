@@ -1,0 +1,205 @@
+<?php
+// ═════════════════════════════════════════════════════════════════════════════
+//  AssessmentService (Module 8A) — the ONLY public surface of the platform.
+//  Product code (entry-point pages, future 8B/8C UIs, cron, plugins) talks to
+//  this facade; it never touches engines or repositories directly. The facade
+//  wires: Config → Generator → Repositories → ScoringEngine → ResultEngine,
+//  and emits domain events at every state change.
+//
+//  Construction:
+//    $svc = AssessmentService::production();        // global DB, outbox attached
+//    $svc = new AssessmentService($db, $bus);        // tests inject fakes
+// ═════════════════════════════════════════════════════════════════════════════
+declare(strict_types=1);
+
+namespace SmartHire\Assessment\Engine;
+
+use SmartHire\Assessment\Domain\Question;
+use SmartHire\Assessment\Domain\Score;
+use SmartHire\Assessment\Results\ResultEngine;
+use SmartHire\Assessment\Scoring\ScoringEngine;
+use SmartHire\Assessment\Shared\AssessmentConfig;
+use SmartHire\Assessment\Shared\AssessmentRepository;
+use SmartHire\Assessment\Shared\DbAdapter;
+use SmartHire\Assessment\Shared\EventBus;
+use SmartHire\Assessment\Shared\Events;
+use SmartHire\Assessment\Shared\GlobalDb;
+use SmartHire\Assessment\Shared\OutboxRepository;
+use SmartHire\Assessment\Shared\PluginRegistry;
+use SmartHire\Assessment\Shared\PoolRepository;
+use SmartHire\Assessment\Shared\QuestionRepository;
+use SmartHire\Assessment\Shared\SubmissionRepository;
+use SmartHire\Assessment\Shared\TemplateRepository;
+
+final class AssessmentService
+{
+    public readonly QuestionRepository   $questions;
+    public readonly PoolRepository       $pools;
+    public readonly TemplateRepository   $templates;
+    public readonly AssessmentRepository $assessments;
+    public readonly SubmissionRepository $submissions;
+    public readonly PluginRegistry       $plugins;
+
+    private readonly ScoringEngine $scorer;
+    private readonly Generator     $generator;
+    private readonly ResultEngine  $results;
+
+    public function __construct(private readonly DbAdapter $db,
+                                public readonly EventBus $events = new EventBus())
+    {
+        $this->questions   = new QuestionRepository($db);
+        $this->pools       = new PoolRepository($db);
+        $this->templates   = new TemplateRepository($db);
+        $this->assessments = new AssessmentRepository($db);
+        $this->submissions = new SubmissionRepository($db);
+        $this->plugins     = new PluginRegistry($db);
+        $this->scorer      = new ScoringEngine();
+        $this->generator   = new Generator();
+        $this->results     = new ResultEngine();
+    }
+
+    private static ?self $prod = null;
+
+    /** Production singleton with the persistent event outbox attached. */
+    public static function production(): self
+    {
+        if (self::$prod === null) {
+            $db  = new GlobalDb();
+            $bus = new EventBus();
+            $bus->attachOutbox([new OutboxRepository($db), 'append']);
+            if (function_exists('logMessage')) {
+                $bus->attachLogger(fn(string $m) => \logMessage('assessment-events: ' . $m));
+            }
+            self::$prod = new self($db, $bus);
+        }
+        return self::$prod;
+    }
+
+    // ── Question Engine ──────────────────────────────────────────────────────
+
+    /** Registry passthrough so callers never import engine internals. */
+    public function questionTypes(): array { return QTypeRegistry::all(); }
+    public function isValidType(string $type): bool { return QTypeRegistry::isValid($type); }
+
+    // ── Config layer ─────────────────────────────────────────────────────────
+
+    /** Effective config for an issued assessment (defaults ← template ← frozen snapshot). */
+    public function configFor(?array $template, array $instanceConfig = []): AssessmentConfig
+    {
+        return AssessmentConfig::fromInstance(
+            is_array($template['config'] ?? null) ? $template['config'] : [], $instanceConfig);
+    }
+
+    // ── Generator: template → issued assessment (existing tables only) ───────
+
+    /**
+     * Generate + persist an assessment instance for a candidate from a template.
+     * Writes online_tests + test_questions; NOTHING parallel.
+     * @return array{id:int,token:string,question_count:int,total_marks:int,shortfalls:array}
+     * @throws \RuntimeException on unknown template / unfillable sections
+     */
+    public function generateFromTemplate(int $templateId, int $candidateId, int $createdBy,
+                                         ?int $seed = null, array $overrides = []): array
+    {
+        $tpl = $this->templates->find($templateId);
+        if (!$tpl) throw new \RuntimeException("Unknown template #$templateId");
+        $cfg = AssessmentConfig::make($tpl['config'] ?? [], $overrides);
+
+        $sections = [];
+        foreach ($tpl['sections'] as $s) {
+            $sections[] = [
+                'name'           => $s['name'],
+                'section_id'     => (int)$s['id'],
+                'pool'           => $s['pool_id'] ? $this->questions->poolByDifficulty((int)$s['pool_id'])
+                                                  : ['easy' => [], 'medium' => [], 'hard' => []],
+                'question_count' => (int)$s['question_count'],
+                'difficulty_mix' => $s['difficulty_mix'] ?: [],
+                'time_minutes'   => $s['time_minutes'] !== null ? (int)$s['time_minutes'] : null,
+            ];
+        }
+        $selection = $this->generator->select($sections, $cfg, $seed);
+
+        $bank = $this->questions->findMany($selection['question_ids']);
+        $totalMarks = 0; $rows = []; $order = 1;
+        foreach ($selection['sections'] as $sec) {
+            foreach ($sec['question_ids'] as $qid) {
+                $q = $bank[$qid] ?? null;
+                if (!$q) continue;
+                $marks = $q->maxScore;
+                if (!$q->isBonus()) $totalMarks += $marks;
+                $rows[] = ['question_id' => $qid, 'marks' => $marks, 'order_no' => $order++,
+                           'time_limit_secs' => 0, 'section_id' => $sec['section_id']];
+            }
+        }
+        if (!$rows) throw new \RuntimeException('Generation selected no questions — check pools and section rules.');
+
+        $token = bin2hex(random_bytes(24));
+        $expiry = !empty($tpl['expiry_days'])
+            ? date('Y-m-d', strtotime('+' . (int)$tpl['expiry_days'] . ' days')) : null;
+
+        $id = $this->assessments->createInstance([
+            'title'            => $tpl['name'],
+            'description'      => $tpl['instructions'] ?? '',
+            'candidate_id'     => $candidateId,
+            'created_by'       => $createdBy,
+            'duration_minutes' => (int)$tpl['duration_minutes'],
+            'total_marks'      => $totalMarks,
+            'passing_marks'    => (int)round($totalMarks * ((int)$tpl['passing_score']) / 100),
+            'status'           => 'pending',
+            'test_link_token'  => $token,
+            'scheduled_date'   => date('Y-m-d'),
+            'expiry_date'      => $expiry,
+            'template_id'      => $templateId,
+            'config'           => $cfg->snapshot(),      // freeze scoring rules at issue time
+        ], $rows);
+        if (!$id) throw new \RuntimeException('Failed to persist generated assessment.');
+
+        $this->events->dispatch(Events::ASSESSMENT_GENERATED, [
+            'entity' => 'online_test', 'entity_id' => $id,
+            'template_id' => $templateId, 'candidate_id' => $candidateId,
+            'question_count' => count($rows), 'total_marks' => $totalMarks,
+            'shortfalls' => array_filter(array_column($selection['sections'], 'shortfall', 'name')),
+        ]);
+
+        return ['id' => $id, 'token' => $token, 'question_count' => count($rows),
+                'total_marks' => $totalMarks,
+                'shortfalls' => array_filter(array_column($selection['sections'], 'shortfall', 'name'))];
+    }
+
+    // ── Scoring Engine (used by take_test.php since 8A) ──────────────────────
+
+    /**
+     * Score one answer with the instance's frozen config.
+     * $questionRow needs: question_type, correct_option, metadata, answer_key + weight (marks).
+     */
+    public function scoreAnswer(array $questionRow, int $weight, mixed $answer,
+                                array $instanceConfig = [], array $templateConfig = []): Score
+    {
+        $cfg = AssessmentConfig::fromInstance($templateConfig, $instanceConfig);
+        return $this->scorer->scoreAnswer(Question::fromRow($questionRow), $weight, $answer, $cfg);
+    }
+
+    public function announceSubmissionScored(int $submissionId, int $testId, int $candidateId,
+                                             float $pct, string $status): void
+    {
+        $this->events->dispatch(Events::SUBMISSION_SCORED, [
+            'entity' => 'test_submission', 'entity_id' => $submissionId,
+            'test_id' => $testId, 'candidate_id' => $candidateId,
+            'percentage' => $pct, 'status' => $status,
+        ]);
+    }
+
+    // ── Result Engine ────────────────────────────────────────────────────────
+
+    public function resultFor(int $submissionId, array $instanceConfig = [],
+                              array $templateConfig = [], array $sectionNames = []): ?\SmartHire\Assessment\Domain\Result
+    {
+        $sub = $this->submissions->find($submissionId);
+        if (!$sub) return null;
+        $rows = $this->submissions->answersWithQuestions($submissionId);
+        $cfg  = AssessmentConfig::fromInstance($templateConfig, $instanceConfig);
+        $history = array_filter($this->submissions->candidateHistory($sub->candidateId),
+                                fn($h) => (int)$h['id'] !== $submissionId);
+        return (new ResultEngine())->analyze($rows, $cfg, $sectionNames, array_values($history));
+    }
+}
