@@ -589,3 +589,106 @@ entry and an audit-log record. No UI redesign, no route/API changes.
 **Regression Results.** All 414 prior tests pass unchanged; diff vs the Phase 2 ZIP shows only the intended files; assessment core untouched; ZIP re-verified 465/465 from a clean extract.
 
 **Remaining Work for Phase 4.** Wire the new capabilities into the UI (scorecard form + timeline view + decision controls + feedback panel on the interview detail / score page); apply the shared pagination helper to interview listings if needed; run the full Definition-of-Done checklist; produce the final Module 9 full-project ZIP.
+
+## 2026-07-21 — Module 10: Offer Management & Hiring (Phase 1 of 9)
+
+**Summary.** Established the Offer Management backend architecture — a new
+`modules/offers/` domain module (Workflow → Validator → Repository → Service, same
+pattern as the assessment/interview modules) plus an additive migration. Delivers
+the core create / edit / lifecycle-transition capability with immutable history and
+audit logging. No existing module, table, route, or UI was touched.
+
+**Files Added.**
+- `modules/offers/OfferWorkflow.php` — status enum (draft→…→accepted/declined/expired/cancelled), transition graph, employment types, editable/terminal helpers.
+- `modules/offers/Db.php` — injectable DB adapter (GlobalDb).
+- `modules/offers/domain/Offer.php` — immutable entity + `fromRow()`.
+- `modules/offers/OfferValidator.php` — `validateOffer` → `{success, errors, data}` (candidate/job-title/salary/currency/dates/employment-type).
+- `modules/offers/OfferRepository.php` — offers SQL (explicit columns, parameterized): create, findById, listByCandidate, update, updateStatus, addHistory, history.
+- `modules/offers/OfferService.php` — facade: `createOffer`, `updateOffer` (edit-lock), `transition` (graph-enforced + history), read facades; `::production()` wiring.
+- `modules/offers/bootstrap.php` — single require point.
+- `modules/offers/migrations/001_offers_core.sql` — additive: `offers`, `offer_history`, `offer_documents`, `offer_approvals` with FKs to candidate/job/recruiter/interview.
+- `tests/offer_tests.php` — 50 Phase 1 tests.
+
+**Files Modified.** `tests/run_tests.php` — wired in the offer test file. (Nothing else.)
+
+**Database Changes.** One additive migration; four new module-owned tables. FKs reference candidates/jobs/users/interviews; **existing tables are not altered** (interview tables explicitly untouched, per spec). candidate cascade-deletes; job/recruiter/interview set-null.
+
+**Backward Compatibility Verification.** Diff vs the Module 9 FINAL baseline shows only the new `modules/offers/`, `tests/offer_tests.php`, and the one-line runner wiring. No route/API/UI change. All 465 prior tests pass unchanged.
+
+**Security Review.** All SQL parameterized and column-explicit (Ch9, no SELECT *). Validators gate every write; the workflow enum rejects invalid statuses/transitions; edits lock outside editable states; bad ids rejected. RBAC/CSRF apply when pages are added in Phase 2 (no endpoints yet).
+
+**Performance Review.** No N+1: single-row writes, one indexed history read; `offers` indexed on candidate_id and status; history indexed per offer.
+
+**Tests Added.** 50 — workflow (enums, transition graph, editable/terminal, nextStates); validator (valid + each failure mode + nullable FKs); entity hydration; repository (create/find/update/updateStatus/history/failure); service createOffer (draft + history + audit + invalid), updateOffer (edit + lock + not-found + bad-id), transition (legal/illegal/unknown/not-found + full lifecycle to accepted + terminal lock + immutable history), read facades.
+
+**Full Test Results.** 515 / 515 passed. Lint clean.
+
+**Regression Results.** 465 prior tests green; additive-only diff vs FINAL; assessment + interview modules untouched; ZIP re-verified 515/515 from a clean extract.
+
+**Remaining Work (Phases 2–9).** Recruiter offer UI + generate-from-interview (2); approval workflow (3); candidate portal accept/decline + edit-lock-on-accept (4); hiring workflow — mark hired, update interview/application, hire date (5); notifications via existing mailer (6); server-side offer-letter PDF + versioning (7); analytics dashboard widgets (8); security/testing hardening + DoD (9).
+
+## 2026-07-23 — Module 10: Offer Management & Hiring (Phase 2 of 9)
+
+**Summary.** Recruiter-side Offer Management. Two new pages — the **Offer Management
+Hub** (`offers.php`) and the **Offer Builder** (`offer_form.php`) — built on the
+Phase 1 module (OfferService / Repository / Validator / Workflow / Offer). Layout,
+navigation, hierarchy and interaction patterns follow the SmartHire UI Architecture
+Deck; styling reuses the existing v8 `.sh-*` design system (no dark theme, no
+Tailwind, no invented classes — verified programmatically). No offer logic lives in
+either controller.
+
+**Files Added.**
+- `offers.php` — Hub: KPI band (total / drafts / expiring ≤7d / accepted + acceptance rate), search + sort toolbar, status filter chips, data grid (Candidate · Designation · Compensation · Expiry · Status · Actions), 600px preview slide-over with offer history timeline, empty states, draft delete.
+- `offer_form.php` — Builder: grouped cards (Candidate & Role · Compensation · Dates · Benefits & Notes) covering the 12 approved fields, inline server-side validation errors with input preserved, create + edit.
+
+**Files Modified.**
+- `modules/offers/OfferRepository.php` — added `listAll()` (status filter + parameterized ILIKE search + whitelisted ORDER BY + RBAC scope), `statusCounts()` (one `GROUP BY`), `expiringSoon()`, `historyForMany()` (batched, no N+1), `delete()`, and a shared `scopeClause()` builder.
+- `modules/offers/OfferService.php` — added `hub()`, `counts()`, `expiring()`, `historyForMany()`, `deleteOffer()` (draft-only), `scopeUserId()` + `canAccess()` RBAC policy, and an **optional** `$actor` ownership guard on `updateOffer()`.
+- `includes/layout.php` — one nav entry per shell (v8 grouped + legacy flat); diff is exactly two added lines.
+- `tests/offer_tests.php` — fake extended to route the new queries; 39 Phase 2 tests.
+
+**Database Changes.** **None.** No new tables, no altered tables, no migration. Phase 2 runs entirely on the Phase 1 schema (`offers`, `offer_history`).
+
+**Security Review.** `requireRole('recruiter')` + `require_csrf()` on every state-changing request on both pages; CSRF token on both the delete form and the builder form. All SQL parameterized and column-explicit — the search term is bound (never interpolated) and sort is a hard whitelist with a safe fallback, so neither is injectable. RBAC is two-layer: queries are scoped at the repository (`created_by`/`recruiter_id`) for plain recruiters, and `canAccess()` re-checks on every edit/delete inside the service, with an `rbac_block` audit entry on denial. Candidate cannot be reassigned after creation. All output escaped via `e()`; the drawer payload is JSON in an escaped attribute and rendered with `textContent` only. Create/update/delete each write an audit entry.
+
+**Performance Notes.** Hub page = 4 queries regardless of row count: list, grouped status counts, expiring count, batched history. History is deliberately fetched with one `IN (…)` query so the drawer cannot degrade into N+1. Sorting and filtering happen in SQL (not in PHP), and `offers` is already indexed on `candidate_id` and `status` from Phase 1.
+
+**Backward Compatibility Report.** No existing page, route, API, table or workflow changed. Assessment, Interview, Authentication and Dashboard modules untouched. The only edit to a shared file is two additive nav lines. `updateOffer()`'s new `$actor` parameter is optional and defaults to null, so all Phase 1 call sites and tests behave identically. Full prior suite (515) passes unchanged.
+
+**Test Results.** **554 / 554 passed** (515 + 39). Lint clean on all changed files.
+
+**Known Limitations.** (1) No pagination — out of the approved Phase 2 scope; the hub renders all matching rows. (2) Delete is restricted to `draft` only (a `rejected` offer is editable but not deletable), matching the spec wording. (3) Generate-from-interview has no dedicated UI; `interview_id` is carried in the schema and validator but Phase 2 exposes no flow for it. (4) The deck's Compensation Calculator and Live Pay Band Guardrail are not built — they need bonus/equity/vesting/pay-band columns that do not exist and were explicitly excluded from the Phase 2 schema. (5) Salary uses western digit grouping rather than the Indian lakh/crore convention. (6) Approval, sending, candidate response, notifications and PDF remain Phase 3+.
+
+## 2026-07-23 — Module 10: Offer Management & Hiring (Phase 3 of 9)
+
+**Summary.** Enterprise Offer Approval Workflow. A configurable sequential approval
+chain (Hiring Manager → HR Manager → Final Approval) drives the offer from Draft
+through Pending Approval to Approved / Rejected / Changes Requested. Every
+transition validates permission and current state, then writes an immutable
+history row (actor, role, timestamp, comment, IP) plus an append-only stage
+decision. New `offer_approval.php` renders the deck's Multi-Tier Approval Stepper,
+the offer/compensation summary, the approval timeline, and a role-aware action
+panel. All logic is service-driven; the page only maps results to flash + redirect.
+
+**Files Added.**
+- `offer_approval.php` — approval workspace: stepper, offer + compensation summary, immutable timeline, action panel (approve / request changes / reject for approvers; submit / withdraw / edit for the recruiter).
+- `modules/offers/migrations/002_approval_workflow.sql` — additive columns only.
+
+**Files Modified.**
+- `OfferWorkflow.php` — added `changes_requested` state; `APPROVAL_CHAIN` (ordered stages + permitted roles); `SELF_APPROVAL_ROLES`; stage helpers (`stageKeys`, `isStage`, `stage`, `roleCanActOnStage`, `nextStage`, `chainComplete`); transition graph and EDITABLE updated to the Phase 3 state rules.
+- `OfferRepository.php` — `addHistory`/`history`/`historyForMany` now carry `actor_role` + `ip_address`; added `addApproval`, `approvals`, `approvalsForMany` (batched), `updateApprovalCycle`; `approval_cycle` added to the explicit column lists.
+- `OfferService.php` — `submitForApproval`, `withdraw`, `approve`, `reject`, `requestChanges`, shared `decide()` guard path, `approvalState()` (stepper derivation), `canDecide()`, `approvalsFor`/`approvalsForMany`, plus internals `loadFor`/`isOwnOffer`/`isExpired`/`record`.
+- `offers.php` — `changes_requested` chip + tone; Submit / Review / Approvals row actions; drawer link to the approval workspace.
+- `tests/offer_tests.php` — fake extended for approvals + cycle; 71 Phase 3 tests.
+
+**Database Changes.** One additive migration (002). `offers` gains `approval_cycle`; `offer_history` gains `actor_role`, `ip_address`; `offer_approvals` gains `stage`, `approver_name`, `approver_role`, `ip_address`, `cycle`, plus one index. All `ADD COLUMN IF NOT EXISTS` — nothing created, altered or dropped elsewhere. **No interview or assessment table touched.**
+
+**Security Review.** RBAC + CSRF on every endpoint (verified: `requireRole` + `require_csrf` + `csrf_field` present on all three offer pages). Authorization is layered: repository-level scoping for plain recruiters, `canAccess()` at the service boundary, and per-stage role checks inside `decide()`. Recruiters can never approve (no stage lists the recruiter role); nobody may approve their own offer except `super_admin`. Every action writes an audit entry, and `rbac_block` is logged on denial. All SQL parameterized and column-explicit; all output escaped. History and stage decisions are append-only — no update or delete path exists for either.
+
+**Performance Notes.** The approval workspace costs a fixed 3 queries (offer, approvals, history) regardless of chain length. `approvalsForMany()` and `historyForMany()` both batch with a single `IN (…)` query so list surfaces never degrade into N+1 (asserted by tests). No `SELECT *`. `offer_approvals` indexed on `(offer_id, cycle, stage)`.
+
+**Backward Compatibility Report.** No route, API or existing page behaviour changed beyond the additive hub wiring. Assessment, Interview, Authentication and Dashboard untouched. `addHistory()` gained two optional trailing parameters, so Phase 1/2 call sites are unaffected. **Two deliberate rule changes, both mandated by the Phase 3 spec:** (1) `rejected` is no longer editable and can no longer return to draft — the spec states "Rejected — Read-only"; the return path is now `changes_requested`. (2) `pending_approval` may transition back to `draft` via recruiter withdrawal. One Phase 1 test asserted the old rule and was updated accordingly; it is the only pre-existing test changed.
+
+**Test Results.** **625 / 625 passed** (554 + 71). Lint clean; zero invented CSS classes (verified programmatically).
+
+**Known Limitations.** (1) The chain is sequential only — the deck mentions parallel/value-routed approvals; routing by offer value is not implemented. (2) There is no dedicated `hiring_manager` role in the platform, so the first two stages map onto `hr`/`admin`/`super_admin`; in a small tenant one admin could clear multiple stages sequentially. (3) Approvers are role-based, not named per-offer — the stepper shows "Unassigned" until a decision is recorded. (4) Withdrawing or requesting changes voids the round: resubmission starts a fresh cycle and previously approved stages must approve again. (5) Expiry is enforced at submit and decision time, but nothing automatically flips a lapsed offer to `expired` (no scheduler). (6) No approval queue/inbox screen — approvers reach offers through the hub's Pending Approval filter. (7) Notifications for approval events remain Phase 6.

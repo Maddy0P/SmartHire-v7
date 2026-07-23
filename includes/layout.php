@@ -60,6 +60,7 @@ function renderSidebar(string $active = ''): void {
             ['candidates',   'fa-users',          'Candidates',   'candidates.php'],
             ['jobs',         'fa-briefcase',      'Jobs',         'jobs.php'],
             ['applications', 'fa-people-arrows',  'Applicants',   'applications.php'],
+            ['offers',       'fa-file-signature', 'Offers',       'offers.php'],
         ],
         'Assess' => [
             ['assessment_center', 'fa-layer-group', 'Assessment Center', 'assessment_center.php'],
@@ -237,6 +238,7 @@ function sh_legacy_sidebar(string $active = ''): void {
         ['candidates',       'fa-users',                'Candidates',       'candidates.php'],
         ['jobs',             'fa-briefcase',            'Jobs',             'jobs.php'],
         ['applications',     'fa-people-arrows',        'Applicants',       'applications.php'],
+        ['offers',           'fa-file-signature',       'Offers',           'offers.php'],
         ['assessment_center','fa-layer-group',          'Assessment Center','assessment_center.php'],
         ['interviews',       'fa-calendar-check',       'Interviews',       'interviews.php'],
         ['online_tests',     'fa-laptop-code',          'Online Tests',     'online_tests.php'],

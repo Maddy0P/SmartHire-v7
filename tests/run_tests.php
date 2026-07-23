@@ -353,6 +353,7 @@ require __DIR__ . '/assessment_core_tests.php';   // Module 8A — Assessment Pl
 require __DIR__ . '/assessment_center_tests.php'; // Module 8B — Assessment Center workflows
 require __DIR__ . '/assessment_player_tests.php'; // Module 8C — Candidate Player delivery
 require __DIR__ . '/interview_tests.php';         // Module 9 — Interview Management
+require __DIR__ . '/offer_tests.php';            // Module 10 — Offer Management
 
 // ═════════════════════════════════════════════════════════════════════════════
 echo "\n══════════════════════════════════════════\n";
