@@ -1,6 +1,13 @@
 /* SmartHire modals & slide-overs — Bible P13, works with existing openModal()/closeModal() (.modal-overlay.active) */
+/* FIX: openModal()/closeModal() in main.js (shared with legacy pages) toggle the
+   class "open" — never "active". _search_modal.php also renders a server-side
+   "show" class for an already-active global search. Without these two selectors,
+   every v8-shell modal (Add/Edit Candidate, Schedule/Edit Interview, global
+   search) stayed display:none regardless of JS state — no console error, no
+   network call, just invisible. Matching all three classes to the same rule
+   keeps `.active` for anything that still authors it directly. */
 .sh-v8 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,.4);z-index:var(--sh-z-modal);align-items:center;justify-content:center;padding:var(--sh-sp-4)}
-.sh-v8 .modal-overlay.active{display:flex;animation:sh-fade-in var(--sh-dur) var(--sh-ease)}
+.sh-v8 .modal-overlay.active,.sh-v8 .modal-overlay.open,.sh-v8 .modal-overlay.show{display:flex;animation:sh-fade-in var(--sh-dur) var(--sh-ease)}
 .sh-v8 .modal{background:var(--sh-surface);border:1px solid var(--sh-border);border-radius:var(--sh-radius-lg);box-shadow:var(--sh-shadow-overlay);width:100%;max-width:560px;max-height:90vh;overflow-y:auto;animation:sh-slide-up var(--sh-dur) var(--sh-ease)}
 .sh-v8 .modal-header{display:flex;align-items:center;justify-content:space-between;padding:var(--sh-sp-5);border-bottom:1px solid var(--sh-border)}
 .sh-v8 .modal-title{margin:0;font-size:var(--sh-fs-lg);font-weight:600}
